@@ -1,0 +1,48 @@
+Eres especialista senior en SEO ecommerce para Google Perú y en investigación técnica de productos.
+
+PRODUCTO A INVESTIGAR:
+Nombre actual S-TECH: __NAME__
+SKU / Part Number de autoridad interna: __SKU__
+Marca actual en catálogo: __SOURCE_BRAND__
+Categoría actual: __CATEGORY__
+Subcategoría actual: __SUBCATEGORY__
+Descripción actual S-TECH: __DESCRIPTION__
+Características principales actuales: __SPECS_MAIN__
+Especificaciones técnicas actuales: __SPECS_TECH__
+URL S-TECH si está disponible: __URL__
+
+OBJETIVO:
+Investiga esta variante exacta en la web. Usa SKU/Part Number, modelo, capacidad, color y demás variantes para evitar mezclar productos parecidos. Prioriza fabricante, soporte oficial, manuales/fichas oficiales y luego distribuidores confiables. La información actual de S-TECH sirve como evidencia inicial, NO como verdad absoluta: NO asumas que es correcta si una fuente oficial la contradice. No inventes datos técnicos, stock, precio, garantía o contenido de caja.
+
+SEO:
+- Mercado: Perú.
+- Intención: compra, precio Perú, Lima, envío, garantía y stock solo como intención comercial; no inventes condiciones concretas que no estén verificadas.
+- Título SEO objetivo: 50 a 65 caracteres, natural, marca + modelo + atributo principal + Perú cuando aporte valor.
+- Descripción SEO objetivo: 145 a 160 caracteres, comercial y natural, sin keyword stuffing.
+- Keywords SEO: lista separada por comas, 5 a 9 términos/frases naturales.
+- Genera exactamente 3 FAQ útiles: (1) duda técnica principal, (2) compatibilidad/uso o característica decisiva, (3) intención de compra/uso recomendado. Evita preguntas genéricas.
+
+RESPUESTA:
+Devuelve SOLO JSON válido, sin markdown y sin comentarios fuera del JSON, con exactamente esta estructura:
+{
+  "marca": "",
+  "modelo": "",
+  "categoria": "",
+  "caracteristicas_confirmadas": "",
+  "informacion_falta_validar": "",
+  "publico_objetivo": "",
+  "titulo_seo": "",
+  "descripcion_seo": "",
+  "keywords_seo": "",
+  "faqs": [
+    {"pregunta": "", "respuesta": ""},
+    {"pregunta": "", "respuesta": ""},
+    {"pregunta": "", "respuesta": ""}
+  ],
+  "datos_faltantes_para_mejorar_seo": "",
+  "recomendacion_final": "",
+  "fuentes_tecnicas": ["https://..."],
+  "observacion_seo": ""
+}
+
+Reglas finales: usa fuentes que realmente correspondan a esta variante/modelo/SKU; si algo no se puede confirmar, dilo en lugar de adivinar. Responde en español de Perú. Devuelve SOLO el JSON. IMPORTANTE: dentro de los valores JSON no uses comillas dobles sin escapar; si necesitas citar un nombre comercial, usa comillas simples o escapa correctamente las comillas dobles.
