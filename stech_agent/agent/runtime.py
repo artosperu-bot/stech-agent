@@ -5,7 +5,7 @@ from typing import Any
 from stech_agent.agent.resolver import ResolutionNeedsClarification, resolve_decision
 from stech_agent.agent.schema import PlannerDecision
 from stech_agent.db.connection import AgentDatabase
-from stech_agent.db.repositories import CatalogRepository, SessionRepository
+from stech_agent.db.repositories import AuditRepository, CatalogRepository, SessionRepository
 from stech_agent.domain.models import ActionType
 from stech_agent.stech.product_writer import UnsupportedLiveField
 
@@ -18,7 +18,11 @@ _FIELD_LABELS = {
     "seo_title": "Título SEO",
     "seo_description": "Descripción SEO",
     "seo_keywords": "Keywords SEO",
+    "seo_faq": "FAQ SEO",
 }
+
+_LIVE_UPDATE_EVENT = "LIVE_UPDATE_VERIFIED"
+_LIVE_ROLLBACK_EVENT = "LIVE_ROLLBACK_VERIFIED"
 
 
 class AgentBrainRuntime:
@@ -113,12 +117,253 @@ class AgentBrainRuntime:
         )
         return f"Encontré {display_name} ({sku}). Actualicé {details}. Cambios guardados y verificados."
 
+    @staticmethod
+    def _nonempty(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return bool(value.strip())
+        return True
+
+    @classmethod
+    def _seo_summary(cls, name: str, sku: str, values: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+        title_ok = cls._nonempty(values.get("seo_title"))
+        description_ok = cls._nonempty(values.get("seo_description"))
+        keywords_ok = cls._nonempty(values.get("seo_keywords"))
+        faqs = values.get("seo_faqs") or []
+        complete_faqs = sum(
+            1
+            for faq in faqs
+            if isinstance(faq, dict)
+            and cls._nonempty(faq.get("question"))
+            and cls._nonempty(faq.get("answer"))
+        )
+        faq_target = 3
+        faq_ok = complete_faqs >= faq_target
+        complete = title_ok and description_ok and keywords_ok and faq_ok
+
+        checks = [
+            f"Título {'✓' if title_ok else '✗'}",
+            f"Descripción {'✓' if description_ok else '✗'}",
+            f"Keywords {'✓' if keywords_ok else '✗'}",
+            f"FAQ {min(complete_faqs, faq_target)}/{faq_target} {'✓' if faq_ok else '✗'}",
+        ]
+        display_name = name or sku
+        if complete:
+            message = f"{display_name} ({sku}): SEO completo. " + " · ".join(checks)
+            status = "SEO_COMPLETE"
+        else:
+            missing: list[str] = []
+            if not title_ok:
+                missing.append("título")
+            if not description_ok:
+                missing.append("descripción")
+            if not keywords_ok:
+                missing.append("keywords")
+            if not faq_ok:
+                missing.append(f"FAQ ({complete_faqs}/{faq_target} completas)")
+            message = f"{display_name} ({sku}): SEO incompleto. Falta: {', '.join(missing)}. " + " · ".join(checks)
+            status = "SEO_INCOMPLETE"
+        return status, message, {
+            "title_ok": title_ok,
+            "description_ok": description_ok,
+            "keywords_ok": keywords_ok,
+            "complete_faqs": complete_faqs,
+            "faq_target": faq_target,
+            "complete": complete,
+        }
+
     def _ensure_live_executor(self):
         if self.live_executor is None:
             from stech_agent.agent.live_executor import StechLiveExecutor
 
             self.live_executor = StechLiveExecutor()
         return self.live_executor
+
+    def _record_verified_update(
+        self,
+        *,
+        session_id: int | None,
+        command: str,
+        sku: str,
+        name: str,
+        before: dict[str, Any],
+        after: dict[str, Any],
+        changed_fields: list[str],
+    ) -> int | None:
+        if session_id is None or not changed_fields:
+            return None
+        fields = list(dict.fromkeys(changed_fields))
+        before_changed = {field: before.get(field) for field in fields}
+        after_changed = {field: after.get(field) for field in fields}
+        return AuditRepository(self.db).add(
+            _LIVE_UPDATE_EVENT,
+            {
+                "command": command,
+                "name": name,
+                "fields": fields,
+                "before": before_changed,
+                "after": after_changed,
+            },
+            session_id=session_id,
+            sku=sku,
+        )
+
+    def session_history(self, session_id: int) -> dict[str, Any]:
+        events = AuditRepository(self.db).list_session(
+            session_id,
+            event_types=(_LIVE_UPDATE_EVENT, _LIVE_ROLLBACK_EVENT),
+        )
+        reverted_ids = {
+            int(event["payload"].get("source_event_id"))
+            for event in events
+            if event["event_type"] == _LIVE_ROLLBACK_EVENT and event["payload"].get("source_event_id") is not None
+        }
+        changes = []
+        for event in events:
+            if event["event_type"] != _LIVE_UPDATE_EVENT:
+                continue
+            payload = event["payload"]
+            changes.append({
+                "event_id": event["id"],
+                "sku": event.get("sku"),
+                "name": payload.get("name") or "",
+                "fields": list(payload.get("fields") or []),
+                "before": dict(payload.get("before") or {}),
+                "after": dict(payload.get("after") or {}),
+                "command": payload.get("command") or "",
+                "created_at": event.get("created_at"),
+                "reverted": event["id"] in reverted_ids,
+            })
+        return {
+            "session_id": int(session_id),
+            "changes": changes,
+            "count": len(changes),
+            "pending_rollback": sum(1 for change in changes if not change["reverted"]),
+        }
+
+    def rollback_session(self, session_id: int) -> dict[str, Any]:
+        history = self.session_history(session_id)
+        pending = [change for change in history["changes"] if not change["reverted"]]
+        if not pending:
+            return {
+                "status": "NOTHING_TO_ROLLBACK",
+                "restored": 0,
+                "conflicts": 0,
+                "failed": 0,
+                "message": "No hay cambios verificados pendientes de deshacer en esta sesión.",
+                "items": [],
+            }
+
+        catalogs = CatalogRepository(self.db)
+        audit = AuditRepository(self.db)
+        executor = self._ensure_live_executor()
+        restored = 0
+        conflicts = 0
+        failed = 0
+        items: list[dict[str, Any]] = []
+
+        for change in reversed(pending):
+            sku = str(change["sku"])
+            product = catalogs.get_by_sku(sku)
+            name = change.get("name") or (product.name if product is not None else "")
+            try:
+                outcome = executor.restore_if_unchanged(
+                    sku=sku,
+                    expected_name=name or None,
+                    expected_current=dict(change["after"]),
+                    restore_values=dict(change["before"]),
+                )
+            except Exception as exc:
+                failed += 1
+                items.append({"sku": sku, "status": "ERROR", "error": f"{type(exc).__name__}: {exc}"})
+                continue
+
+            if outcome.get("status") in {"VERIFIED", "NOOP"}:
+                restored += 1
+                audit.add(
+                    _LIVE_ROLLBACK_EVENT,
+                    {
+                        "source_event_id": change["event_id"],
+                        "name": name,
+                        "fields": list(change["fields"]),
+                        "before": dict(change["after"]),
+                        "after": dict(change["before"]),
+                    },
+                    session_id=session_id,
+                    sku=sku,
+                )
+                items.append({"sku": sku, "status": "RESTORED", "fields": list(change["fields"])})
+            elif outcome.get("status") == "CONFLICT":
+                conflicts += 1
+                items.append({
+                    "sku": sku,
+                    "status": "CONFLICT",
+                    "fields": list(change["fields"]),
+                    "current": outcome.get("before") or {},
+                    "expected": dict(change["after"]),
+                })
+            else:
+                failed += 1
+                items.append({"sku": sku, "status": outcome.get("status") or "ERROR"})
+
+        if restored and not conflicts and not failed:
+            status = "ROLLED_BACK"
+            message = f"Deshice {restored} cambio(s) de esta sesión y verifiqué la restauración."
+        elif restored:
+            status = "PARTIAL"
+            message = f"Deshice {restored} cambio(s). {conflicts} no se tocaron porque el valor actual cambió después; {failed} fallaron."
+        elif conflicts:
+            status = "PARTIAL"
+            message = f"No revertí cambios porque {conflicts} valor(es) ya no coinciden con lo que había dejado el agente. No pisé esos cambios posteriores."
+        else:
+            status = "ERROR"
+            message = f"No pude deshacer los cambios. Fallaron {failed} operación(es)."
+
+        return {
+            "status": status,
+            "restored": restored,
+            "conflicts": conflicts,
+            "failed": failed,
+            "message": message,
+            "items": items,
+        }
+
+    def _execute_seo_read(self, planned: dict[str, Any], decision: PlannerDecision) -> dict[str, Any]:
+        if planned.get("count") != 1:
+            return {
+                **planned,
+                "executed": False,
+                "status": "BLOCKED",
+                "message": "Para verificar SEO necesito resolver exactamente un producto.",
+            }
+        sku = planned["resolved_skus"][0]
+        product = CatalogRepository(self.db).get_by_sku(sku)
+        expected_name = product.name if product is not None else None
+        fields = tuple(decision.fields or ("seo_title", "seo_description", "seo_keywords", "seo_faq"))
+        try:
+            values = self._ensure_live_executor().read_fields(
+                sku=sku,
+                fields=fields,
+                expected_name=expected_name,
+            )
+        except Exception as exc:
+            return {
+                **planned,
+                "executed": False,
+                "status": "ERROR",
+                "message": f"No pude verificar el SEO en S-TECH: {type(exc).__name__}: {exc}",
+            }
+        status, message, checks = self._seo_summary(expected_name or "", sku, values)
+        return {
+            **planned,
+            "dry_run": False,
+            "executed": False,
+            "status": status,
+            "message": message,
+            "seo": values,
+            "seo_checks": checks,
+        }
 
     def execute(self, command: str, *, session_id: int | None = None) -> dict[str, Any]:
         planned = self.plan(command, session_id=session_id)
@@ -134,15 +379,18 @@ class AgentBrainRuntime:
             }
 
         decision = PlannerDecision.from_dict(decision_data)
-        if decision.action is not ActionType.UPDATE_FIELDS:
+        if decision.action is ActionType.READ:
+            if decision.section == "seo":
+                return self._execute_seo_read(planned, decision)
             count = planned.get("count", 0)
-            if decision.action is ActionType.READ:
-                return {
-                    **planned,
-                    "executed": False,
-                    "status": "READ_ONLY",
-                    "message": f"Encontré {count} producto(s) que cumplen la orden. No hice cambios.",
-                }
+            return {
+                **planned,
+                "executed": False,
+                "status": "READ_ONLY",
+                "message": f"Encontré {count} producto(s) que cumplen la orden. No hice cambios.",
+            }
+
+        if decision.action is not ActionType.UPDATE_FIELDS:
             return {
                 **planned,
                 "executed": False,
@@ -220,6 +468,15 @@ class AgentBrainRuntime:
                 outcome.get("changed_fields") or [],
             )
             executed = True
+            audit_event_id = self._record_verified_update(
+                session_id=session_id,
+                command=command,
+                sku=sku,
+                name=outcome.get("name") or expected_name or "",
+                before=outcome.get("before") or {},
+                after=outcome.get("after") or {},
+                changed_fields=outcome.get("changed_fields") or [],
+            )
         elif status == "NOOP":
             fields = sorted(resolved.patch.values)
             detail = ", ".join(
@@ -228,9 +485,11 @@ class AgentBrainRuntime:
             )
             message = f"Encontré {expected_name or sku} ({sku}). {detail}. No fue necesario guardar cambios."
             executed = False
+            audit_event_id = None
         else:
             message = f"Intenté actualizar {expected_name or sku} ({sku}), pero la verificación no confirmó el resultado. Lo dejé en revisión."
             executed = True
+            audit_event_id = None
 
         return {
             **planned,
@@ -240,6 +499,7 @@ class AgentBrainRuntime:
             "message": message,
             "before": outcome.get("before") or {},
             "after": outcome.get("after") or {},
+            "audit_event_id": audit_event_id,
         }
 
     def close(self) -> None:
