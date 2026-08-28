@@ -7,8 +7,10 @@ from pathlib import Path
 from stech_agent.agent.config import PlannerSettings
 from stech_agent.agent.guided_menu import (
     bulk_confirmation_text,
+    create_confirmation_text,
     main_menu_text,
     normalize_local_command,
+    product_create_reference_values,
     resolve_guided_scope,
     scope_kind_from_choice,
     scope_menu_text,
@@ -16,6 +18,7 @@ from stech_agent.agent.guided_menu import (
     section_menu_text,
 )
 from stech_agent.agent.openai_brain import OpenAIPlanner
+from stech_agent.agent.product_creation import prepare_new_product
 from stech_agent.agent.runtime import AgentBrainRuntime
 from stech_agent.catalog.reader import read_items_export
 from stech_agent.db.connection import AgentDatabase
@@ -33,6 +36,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _preview_values(title: str, values, *, limit: int = 25) -> None:
+    items = [str(value) for value in values if str(value).strip()]
+    if not items:
+        return
+    print(f"{title}: {', '.join(items[:limit])}")
+    if len(items) > limit:
+        print(f"  ... y {len(items) - limit} opción(es) más.")
+
+
 def _print_history(runtime: AgentBrainRuntime, session_id: int) -> None:
     history = runtime.session_history(session_id)
     changes = history["changes"]
@@ -47,6 +59,100 @@ def _print_history(runtime: AgentBrainRuntime, session_id: int) -> None:
         for field in change["fields"]:
             print(f"   {field}: {change['before'].get(field)} → {change['after'].get(field)}")
     print(f"Pendientes de deshacer: {history['pending_rollback']}")
+
+
+def _guided_create_product(
+    runtime: AgentBrainRuntime,
+    catalogs: CatalogRepository,
+    sessions: SessionRepository,
+    session_id: int,
+    *,
+    dry_run: bool,
+) -> None:
+    snapshot = catalogs.load_snapshot_data()
+    refs = product_create_reference_values(snapshot.products)
+
+    print("\nAGREGAR NUEVO PRODUCTO")
+    print("Completa los datos obligatorios. El producto se creará inicialmente NO visible y sin oferta/destacados.")
+    print("Los datos se validan contra el catálogo actual antes de abrir S-TECH.")
+    print()
+    _preview_values("Marcas existentes", refs["brands"])
+    _preview_values("Categorías existentes", refs["categories"])
+
+    sku = input("\nSKU / Part Number: ").strip()
+    if not sku or sku.casefold() in {"cancelar", "0"}:
+        print("Agente> Alta cancelada.")
+        return
+    name = input("Nombre del producto: ").strip()
+    brand = input("Marca: ").strip()
+    category = input("Categoría: ").strip()
+
+    canonical_category = next(
+        (value for value in refs["categories"] if str(value).casefold() == category.casefold()),
+        None,
+    )
+    if canonical_category:
+        _preview_values(
+            f"Subcategorías de {canonical_category}",
+            refs["subcategories_by_category"].get(canonical_category, ()),
+        )
+    subcategory = input("Subcategoría: ").strip()
+    price = input("Precio de Venta: ").strip()
+    stock = input("Stock Disponible: ").strip()
+
+    print("\nDATOS OPCIONALES (Enter para dejar vacío / valor seguro)")
+    description = input("Descripción: ").strip()
+    discount = input("Precio con Descuento [0]: ").strip() or "0"
+    main_specs = input("Especificaciones principales: ").strip()
+    technical_specs = input("Especificaciones técnicas: ").strip()
+    if refs["statuses"]:
+        _preview_values("Estados observados en catálogo", refs["statuses"])
+    status = input("Estado [vacío]: ").strip()
+
+    raw_values = {
+        "sku": sku,
+        "name": name,
+        "description": description,
+        "brand": brand,
+        "category": category,
+        "subcategory": subcategory,
+        "price": price,
+        "discount": discount,
+        "stock": stock,
+        "status": status,
+        "main_specs": main_specs,
+        "technical_specs": technical_specs,
+    }
+
+    try:
+        draft = prepare_new_product(snapshot, raw_values)
+    except (ValueError, KeyError) as exc:
+        print(f"\nAgente> No puedo preparar el alta: {exc}")
+        print("No abrí S-TECH ni generé una importación.")
+        return
+
+    print(create_confirmation_text(draft))
+    confirmation = input("Confirmación> ").strip().casefold()
+    if confirmation != "crear":
+        print("\nAgente> Cancelado. No abrí ni modifiqué S-TECH.")
+        return
+    if dry_run:
+        print("\nAgente> Dry-run confirmado: la ficha es válida, pero no abrí S-TECH ni importé nada.")
+        return
+
+    result = runtime.create_product(raw_values, session_id=session_id)
+    print(f"\nAgente> {result['message']}")
+    if result.get("status") == "VERIFIED" and result.get("sku"):
+        sessions.replace_working_set(
+            session_id,
+            "current",
+            [str(result["sku"])],
+            query={"source": "product_create", "sku": str(result["sku"])},
+        )
+        print(f"[MEMORIA] conjunto actual: 1 SKU ({result['sku']})")
+        print("Agente> Puedes continuar, por ejemplo: 'ahora verifica su SEO' o 'cámbiale el stock'.")
+    elif result.get("status") == "IMPORT_NOT_CERTIFIED":
+        print("Agente> La ficha quedó validada, pero el alta real seguirá bloqueada hasta certificar una vez el importador con PROD-TEST.")
 
 
 def _resolve_scope_interactive(
@@ -265,6 +371,15 @@ def _handle_local_command(
             return True
         result = runtime.rollback_session(session_id)
         print(f"\nAgente> {result['message']}")
+        return True
+    if local == "create_product":
+        _guided_create_product(
+            runtime,
+            catalogs,
+            sessions,
+            session_id,
+            dry_run=dry_run,
+        )
         return True
     if local.startswith("guided:"):
         _guided_flow(
