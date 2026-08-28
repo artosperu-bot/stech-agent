@@ -202,7 +202,7 @@ def _verify_seo_skus(
     working_set_skus = list(dict.fromkeys(has_seo_skus + completed_skus))
     overall = "PARTIAL" if errors or preparation_errors else "SEO_AUDIT"
     message = (
-        f"{scope_label}: {len(complete_skus)} ya completo(s), "
+        f"{scope_label}: {len(complete_skus)} completo(s), "
         f"{len(incomplete_skus)} incompleto(s) / parcial(es), "
         f"{len(empty_skus)} sin SEO, {errors} error(es)."
     )
