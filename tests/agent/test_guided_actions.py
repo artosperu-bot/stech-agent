@@ -17,7 +17,22 @@ class NoPlanner:
 
 class FakeLiveExecutor:
     def __init__(self):
-        self.current = {"PROD-TEST": {"stock": 2, "price": "1.00", "name": "producto test", "description": ""}}
+        self.current = {
+            "PROD-TEST": {
+                "stock": 2,
+                "price": "1.00",
+                "name": "producto test",
+                "description": "",
+                "seo_title": "Producto Test SEO",
+                "seo_description": "Descripción SEO",
+                "seo_keywords": "producto test, prueba",
+                "seo_faqs": [
+                    {"question": "Q1", "answer": "A1"},
+                    {"question": "Q2", "answer": "A2"},
+                    {"question": "Q3", "answer": "A3"},
+                ],
+            }
+        }
         self.calls = []
 
     def execute_update(self, *, sku, expected_name, patch):
@@ -32,6 +47,15 @@ class FakeLiveExecutor:
             "after": {**before, **patch.values},
             "changed_fields": list(patch.values),
         }
+
+    def read_fields(self, *, sku, fields, expected_name=None):
+        result = {}
+        for field in fields:
+            if field == "seo_faq":
+                result["seo_faqs"] = self.current[sku]["seo_faqs"]
+            else:
+                result[field] = self.current[sku].get(field)
+        return result
 
     def close(self):
         pass
@@ -84,3 +108,13 @@ def test_guided_update_rejects_field_outside_selected_section_before_live_call(t
 
     assert result["status"] == "BLOCKED"
     assert live.calls == []
+
+
+def test_guided_seo_verification_bypasses_model(tmp_path):
+    db = _db(tmp_path)
+    runtime = AgentBrainRuntime(db, NoPlanner(), live_executor=FakeLiveExecutor())
+
+    result = runtime.verify_seo_sku("PROD-TEST")
+
+    assert result["status"] == "SEO_COMPLETE"
+    assert "SEO completo" in result["message"]
