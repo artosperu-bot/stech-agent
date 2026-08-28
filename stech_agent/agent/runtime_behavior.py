@@ -3,12 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 from stech_agent.agent.memory_policy import working_set_skus_for_result
+from stech_agent.agent.resolver import resolve_decision
 from stech_agent.agent.runtime import AgentBrainRuntime
 from stech_agent.agent.schema import PlannerDecision
+from stech_agent.domain.models import ActionType
 
 
 _ORIGINAL_INIT = AgentBrainRuntime.__init__
 _ORIGINAL_CLOSE = AgentBrainRuntime.close
+_ORIGINAL_PLAN = AgentBrainRuntime.plan
 _ORIGINAL_EXECUTE = AgentBrainRuntime.execute
 _ORIGINAL_EXECUTE_SEO_READ = AgentBrainRuntime._execute_seo_read
 
@@ -23,6 +26,33 @@ def _close(self) -> None:
     if getattr(self, "seo_preparer", None) is not None and hasattr(self.seo_preparer, "close"):
         self.seo_preparer.close()
     _ORIGINAL_CLOSE(self)
+
+
+def _plan(self, command: str, *, session_id: int | None = None) -> dict[str, Any]:
+    result = _ORIGINAL_PLAN(self, command, session_id=session_id)
+    decision_data = result.get("decision") or {}
+    if decision_data.get("clarification_required"):
+        return result
+    try:
+        decision = PlannerDecision.from_dict(decision_data)
+    except Exception:
+        return result
+    if decision.action is not ActionType.GENERATE_SEO:
+        return result
+
+    try:
+        _catalogs, products, working_skus, _context = self._catalog_context(session_id)
+        resolved = resolve_decision(decision, products, working_set_skus=working_skus)
+    except Exception:
+        return result
+
+    return {
+        **result,
+        "resolved_skus": list(resolved.skus),
+        "count": len(resolved.skus),
+        "blocked_skus": list(resolved.blocked_skus),
+        "blocked_ambiguous": len(resolved.blocked_skus),
+    }
 
 
 def _seo_summary(cls, name: str, sku: str, values: dict[str, Any]):
@@ -237,6 +267,23 @@ def _verify_seo_skus(
     }
 
 
+def _scope_label(decision: PlannerDecision) -> str:
+    target = decision.target
+    if target.brand:
+        return f"Marca {target.brand}"
+    if target.category:
+        return f"Categoría {target.category}"
+    if target.subcategory:
+        return f"Subcategoría {target.subcategory}"
+    if target.name:
+        return target.name
+    if target.all_products:
+        return "Todos los productos"
+    if target.use_working_set:
+        return "Conjunto actual"
+    return "Selección SEO"
+
+
 def _execute_seo_read(self, planned: dict[str, Any], decision: PlannerDecision) -> dict[str, Any]:
     count = int(planned.get("count") or 0)
     if count <= 0:
@@ -309,13 +356,68 @@ def _execute_seo_read(self, planned: dict[str, Any], decision: PlannerDecision) 
     }
 
 
+def _execute_generate_seo(self, planned: dict[str, Any], decision: PlannerDecision, *, session_id: int | None) -> dict[str, Any]:
+    examined = list(planned.get("resolved_skus") or [])
+    blocked = list(planned.get("blocked_skus") or [])
+    if not examined:
+        return {
+            **planned,
+            "executed": False,
+            "status": "BLOCKED",
+            "message": "No quedó ningún SKU seguro para revisar/completar SEO.",
+            "working_set_skus": [],
+            "blocked_skus": blocked,
+            "blocked_ambiguous": len(blocked),
+        }
+
+    audit = self.verify_seo_skus(
+        examined,
+        scope_label=_scope_label(decision),
+        session_id=session_id,
+    )
+    message = str(audit.get("message") or "")
+    if blocked:
+        preview = ", ".join(blocked[:10])
+        suffix = " ..." if len(blocked) > 10 else ""
+        message += (
+            f" Omití {len(blocked)} SKU conflictivo(s) del export ({preview}{suffix}); "
+            "no los abrí ni modifiqué."
+        )
+
+    return {
+        **planned,
+        **audit,
+        "dry_run": False,
+        "executed": bool(audit.get("completed_during_audit")),
+        "message": message.strip(),
+        "examined_skus": examined,
+        "blocked_skus": blocked,
+        "blocked_ambiguous": len(blocked),
+        "resolved_skus": list(audit.get("working_set_skus") or []),
+    }
+
+
 def _execute(self, command: str, *, session_id: int | None = None) -> dict[str, Any]:
     previous_session = getattr(self, "_seo_active_session_id", None)
     self._seo_active_session_id = session_id
     try:
         result = _ORIGINAL_EXECUTE(self, command, session_id=session_id)
+        decision_data = result.get("decision") or {}
+        if not decision_data.get("clarification_required"):
+            try:
+                decision = PlannerDecision.from_dict(decision_data)
+            except Exception:
+                decision = None
+            if (
+                decision is not None
+                and decision.action is ActionType.GENERATE_SEO
+                and decision.section == "seo"
+                and result.get("status") == "NOT_CONNECTED"
+            ):
+                result = _execute_generate_seo(self, result, decision, session_id=session_id)
     finally:
         self._seo_active_session_id = previous_session
+
     safe_skus = working_set_skus_for_result(result)
     if safe_skus is None:
         if result.get("resolved_skus"):
@@ -327,12 +429,13 @@ def _execute(self, command: str, *, session_id: int | None = None) -> dict[str, 
 
 
 def install_runtime_behavior() -> None:
-    if getattr(AgentBrainRuntime, "_stech_runtime_behavior_v4", False):
+    if getattr(AgentBrainRuntime, "_stech_runtime_behavior_v5", False):
         return
     AgentBrainRuntime.__init__ = _init
     AgentBrainRuntime.close = _close
+    AgentBrainRuntime.plan = _plan
     AgentBrainRuntime._seo_summary = classmethod(_seo_summary)
     AgentBrainRuntime.verify_seo_skus = _verify_seo_skus
     AgentBrainRuntime._execute_seo_read = _execute_seo_read
     AgentBrainRuntime.execute = _execute
-    AgentBrainRuntime._stech_runtime_behavior_v4 = True
+    AgentBrainRuntime._stech_runtime_behavior_v5 = True
