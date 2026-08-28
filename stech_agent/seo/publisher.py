@@ -39,7 +39,16 @@ def _json(value: Any) -> str:
 
 def _audit_field_value(values: dict[str, Any], field: str) -> Any:
     if field == "seo_faq":
-        return values.get("seo_faqs", [])
+        normalized: list[dict[str, str]] = []
+        for faq in values.get("seo_faqs", []) or []:
+            if not isinstance(faq, dict):
+                continue
+            question = str(faq.get("question") or faq.get("pregunta") or "")
+            answer = str(faq.get("answer") or faq.get("respuesta") or "")
+            if not question.strip() and not answer.strip():
+                continue
+            normalized.append({"question": question, "answer": answer})
+        return normalized
     return values.get(field)
 
 
