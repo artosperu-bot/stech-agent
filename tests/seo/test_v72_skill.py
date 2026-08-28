@@ -72,4 +72,4 @@ def test_v72_validator_requires_exactly_three_faq():
 
 def test_v72_validator_requires_technical_url():
     with pytest.raises(ValueError, match="URL técnica válida"):
-        validate_seo_payload(_valid_payload(fuentes_tecnicas=["JBL"])))
+        validate_seo_payload(_valid_payload(fuentes_tecnicas=["JBL"]))
