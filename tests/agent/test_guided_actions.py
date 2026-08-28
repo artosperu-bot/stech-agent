@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from stech_agent.agent.runtime import AgentBrainRuntime
 from stech_agent.catalog.reader import CatalogSnapshotData
 from stech_agent.db.connection import AgentDatabase
@@ -62,7 +64,7 @@ def test_guided_update_bypasses_model_and_saves_one_validated_patch(tmp_path):
     )
 
     assert result["status"] == "VERIFIED"
-    assert live.calls == [("PROD-TEST", {"stock": 3, "price": "1.50"})]
+    assert live.calls == [("PROD-TEST", {"stock": 3, "price": Decimal("1.50")})]
     assert "Cambios guardados y verificados" in result["message"]
     assert runtime.session_history(session_id)["count"] == 1
 
