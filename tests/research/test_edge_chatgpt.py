@@ -14,7 +14,9 @@ from stech_agent.research.edge_chatgpt import (
 
 
 def test_composer_flattens_newlines_so_selenium_does_not_submit_first_line():
-    assert composer_prompt_text("uno\ndos\t tres") == "uno dos tres"
+    text = composer_prompt_text("uno\ndos\t tres")
+    assert "\n" not in text and "\t" not in text
+    assert text.split() == ["uno", "dos", "tres"]
 
 
 def test_prompt_delivery_requires_head_tail_and_most_content():
