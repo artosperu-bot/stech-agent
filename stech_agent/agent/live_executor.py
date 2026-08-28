@@ -32,8 +32,9 @@ class StechLiveExecutor:
     """Executes only already-certified direct field updates for one SKU.
 
     The browser session is lazy and persistent for the lifetime of the chat.
-    Unsupported fields are rejected before opening S-TECH. Reads and rollback
-    reuse the same session so the agent can verify before writing.
+    Unsupported fields are rejected before opening S-TECH. Reads, rollback and
+    product creation reuse the same session so the agent can verify operations
+    without spawning independent browser profiles.
     """
 
     def __init__(self, *, session: StechSession | None = None, log=None):
@@ -150,12 +151,33 @@ class StechLiveExecutor:
             }
 
         patch = FieldPatch(dict(restore_values))
-        outcome = self.execute_update(
+        return self.execute_update(
             sku=str(sku),
             expected_name=expected_name,
             patch=patch,
         )
-        return outcome
+
+    def create_product(
+        self,
+        *,
+        db,
+        catalog_repository,
+        values: dict[str, Any],
+        work_dir,
+        session_id: int | None = None,
+    ) -> dict[str, Any]:
+        from stech_agent.agent.product_create_executor import ProductCreateExecutor
+        from stech_agent.stech.catalog_transfer import CatalogTransfer
+
+        session = self._ensure_session()
+        transfer = CatalogTransfer(session, catalog_repository)
+        creator = ProductCreateExecutor(
+            db=db,
+            catalog_repository=catalog_repository,
+            transfer=transfer,
+            work_dir=work_dir,
+        )
+        return creator.create(dict(values), session_id=session_id)
 
     def close(self) -> None:
         if self._session is not None and self._owns_session:
