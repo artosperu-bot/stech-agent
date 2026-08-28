@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import re
 from typing import Any, Callable, Iterable
 
-from stech_agent.stech.product_locator import locate_exact_sku
+from stech_agent.stech.product_open import open_product_editor
 from stech_agent.stech.selectors import locate
 
 
@@ -22,14 +22,7 @@ class ProductLiveState:
 
 
 def _open_product_editor(page: Any, sku: str, expected_name: str | None = None):
-    located = locate_exact_sku(page, sku, expected_name=expected_name)
-    located.row.click()
-    page.wait_for_timeout(450)
-    edit = locate(page, "edit_button")
-    if not edit.count():
-        raise RuntimeError(f"No se encontró el botón Editar para SKU {sku}")
-    edit.first.click()
-    locate(page, "tab_basic").wait_for(state="visible", timeout=20_000)
+    located, _method = open_product_editor(page, sku, expected_name)
     return located
 
 
