@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from stech_agent.agent.resolver import resolve_decision
+from stech_agent.agent.resolver import ResolutionNeedsClarification, resolve_decision
 from stech_agent.db.connection import AgentDatabase
 from stech_agent.db.repositories import CatalogRepository, SessionRepository
 
@@ -11,6 +11,21 @@ class AgentBrainRuntime:
     def __init__(self, db: AgentDatabase, planner: Any):
         self.db = db
         self.planner = planner
+
+    @staticmethod
+    def _clarification_result(decision, question: str, *, candidate_skus=()) -> dict[str, Any]:
+        decision_data = decision.to_dict()
+        decision_data["clarification_required"] = True
+        decision_data["clarification_question"] = question
+        return {
+            "dry_run": True,
+            "decision": decision_data,
+            "resolved_skus": [],
+            "count": 0,
+            "query_explanation": "clarification_required",
+            "authorized_fields": [],
+            "candidate_skus": list(candidate_skus),
+        }
 
     def plan(self, command: str, *, session_id: int | None = None) -> dict[str, Any]:
         catalogs = CatalogRepository(self.db)
@@ -34,16 +49,20 @@ class AgentBrainRuntime:
         decision = self.planner.plan(command, context)
 
         if decision.clarification_required:
-            return {
-                "dry_run": True,
-                "decision": decision.to_dict(),
-                "resolved_skus": [],
-                "count": 0,
-                "query_explanation": "clarification_required",
-                "authorized_fields": [],
-            }
+            return self._clarification_result(
+                decision,
+                decision.clarification_question or "Necesito una aclaración antes de continuar.",
+            )
 
-        resolved = resolve_decision(decision, products, working_set_skus=working_skus)
+        try:
+            resolved = resolve_decision(decision, products, working_set_skus=working_skus)
+        except ResolutionNeedsClarification as exc:
+            return self._clarification_result(
+                decision,
+                exc.question,
+                candidate_skus=exc.candidate_skus,
+            )
+
         authorized_fields = []
         if resolved.patch is not None:
             authorized_fields = sorted(resolved.patch.authorized_fields or ())
@@ -55,4 +74,5 @@ class AgentBrainRuntime:
             "count": len(resolved.skus),
             "query_explanation": resolved.query_explanation,
             "authorized_fields": authorized_fields,
+            "candidate_skus": [],
         }
