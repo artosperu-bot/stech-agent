@@ -58,3 +58,34 @@ def test_faq_reader_returns_three_pairs(monkeypatch):
         {"question":"Q2","answer":"A2"},
         {"question":"Q3","answer":"A3"},
     ]
+
+
+def test_faq_writer_can_restore_zero_faq_by_clearing_existing_slots(monkeypatch):
+    questions = Collection(["Q1", "Q2", "Q3"])
+    answers = Collection(["A1", "A2", "A3"])
+    tab = Button()
+    add = Button()
+    def fake_locate(page, key):
+        return {"tab_seo": tab, "seo_question": questions, "seo_answer": answers, "seo_add_faq": add}[key]
+    monkeypatch.setattr(product_writer, "locate", fake_locate)
+
+    product_writer._set_seo_faqs(object(), [])
+
+    assert [x.value for x in questions.items] == ["", "", ""]
+    assert [x.value for x in answers.items] == ["", "", ""]
+    assert add.clicks == 0
+
+
+def test_faq_writer_can_restore_one_prior_faq_and_clear_extra_slots(monkeypatch):
+    questions = Collection(["Generated Q1", "Generated Q2", "Generated Q3"])
+    answers = Collection(["Generated A1", "Generated A2", "Generated A3"])
+    tab = Button()
+    add = Button()
+    def fake_locate(page, key):
+        return {"tab_seo": tab, "seo_question": questions, "seo_answer": answers, "seo_add_faq": add}[key]
+    monkeypatch.setattr(product_writer, "locate", fake_locate)
+
+    product_writer._set_seo_faqs(object(), [{"question":"Manual Q","answer":"Manual A"}])
+
+    assert [x.value for x in questions.items] == ["Manual Q", "", ""]
+    assert [x.value for x in answers.items] == ["Manual A", "", ""]
