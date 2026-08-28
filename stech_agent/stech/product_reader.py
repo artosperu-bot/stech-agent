@@ -159,7 +159,12 @@ class ProductReader:
         questions = locate(self.page, "seo_question")
         answers = locate(self.page, "seo_answer")
         faq_count = min(questions.count(), answers.count())
-        faqs = [{"question": questions.nth(i).input_value(), "answer": answers.nth(i).input_value()} for i in range(faq_count)]
+        faqs: list[dict[str, str]] = []
+        for i in range(faq_count):
+            question = questions.nth(i).input_value()
+            answer = answers.nth(i).input_value()
+            if question or answer:
+                faqs.append({"question": question, "answer": answer})
         values = {"seo_title": title, "seo_description": description, "seo_keywords": keywords, "seo_faqs": faqs}
         return values, dict(values)
 
