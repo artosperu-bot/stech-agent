@@ -25,7 +25,16 @@ def test_main_menu_exposes_create_product_option():
 
 
 def test_natural_create_commands_open_same_guided_create_flow():
-    for command in ("8", "agregar nuevo producto", "crear producto", "nuevo producto"):
+    for command in (
+        "8",
+        "agregar nuevo producto",
+        "agrega un nuevo producto",
+        "agregar un nuevo producto",
+        "crear producto",
+        "crea un nuevo producto",
+        "crear un nuevo producto",
+        "nuevo producto",
+    ):
         assert normalize_local_command(command) == "create_product"
 
 
