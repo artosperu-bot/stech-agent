@@ -1,0 +1,1 @@
+Root cause 2026-08-28: ProductReader used a global accessible-role Editar lookup after exact SKU selection. Real S-TECH table may expose the edit control only as a control/icon inside the row's final Acciones cell. Fix must remain row-scoped after exact SKU validation and use the proven fallback chain from the prior stock dry-run.
