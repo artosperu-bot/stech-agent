@@ -9,6 +9,7 @@ from stech_agent.db.connection import AgentDatabase
 MIGRATIONS = (
     (1, "001_initial.sql"),
     (2, "002_seo_batches.sql"),
+    (3, "003_seo_audit_cache.sql"),
 )
 
 
