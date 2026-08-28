@@ -6,10 +6,12 @@ from pathlib import Path
 
 from stech_agent.agent.config import PlannerSettings
 from stech_agent.agent.guided_menu import (
-    confirmation_text,
+    bulk_confirmation_text,
     main_menu_text,
     normalize_local_command,
-    resolve_product_reference,
+    resolve_guided_scope,
+    scope_kind_from_choice,
+    scope_menu_text,
     section_fields,
     section_menu_text,
 )
@@ -47,19 +49,107 @@ def _print_history(runtime: AgentBrainRuntime, session_id: int) -> None:
     print(f"Pendientes de deshacer: {history['pending_rollback']}")
 
 
-def _guided_product(catalogs: CatalogRepository):
-    reference = input("\nSKU o nombre exacto del producto: ").strip()
-    return resolve_product_reference(catalogs.list_products(), reference)
+def _resolve_scope_interactive(
+    catalogs: CatalogRepository,
+    sessions: SessionRepository,
+    session_id: int,
+):
+    print(scope_menu_text())
+    raw_choice = input("Alcance> ").strip()
+    if raw_choice == "0" or not raw_choice:
+        return None
+    kind = scope_kind_from_choice(raw_choice)
+    if kind is None:
+        print("Agente> Opción de alcance inválida.")
+        return None
+
+    value = None
+    if kind == "single":
+        value = input("SKU o nombre exacto del producto: ").strip()
+    elif kind == "brand":
+        value = input("Marca: ").strip()
+    elif kind == "category":
+        value = input("Categoría: ").strip()
+    elif kind == "subcategory":
+        value = input("Subcategoría: ").strip()
+
+    working = sessions.get_working_set(session_id, "current")
+    working_skus = tuple((working or {}).get("skus") or ())
+    try:
+        scope = resolve_guided_scope(
+            catalogs.list_products(),
+            kind,
+            value=value,
+            working_set_skus=working_skus,
+        )
+    except ValueError as exc:
+        print(f"Agente> {exc}")
+        return None
+
+    print(f"\nAlcance seleccionado: {scope.label}")
+    print(f"Productos encontrados: {scope.total_matches}")
+    print(f"Productos aplicables: {len(scope.skus)}")
+    if scope.blocked_skus:
+        preview = ", ".join(scope.blocked_skus[:10])
+        suffix = " ..." if len(scope.blocked_skus) > 10 else ""
+        print(f"Bloqueados por datos ambiguos del export: {len(scope.blocked_skus)} ({preview}{suffix})")
+    if not scope.skus:
+        print("Agente> No quedan productos seguros para procesar en este alcance.")
+        return None
+
+    sessions.replace_working_set(
+        session_id,
+        "current",
+        list(scope.skus),
+        query={"source": "guided_scope", "scope": scope.label},
+    )
+    print(f"[MEMORIA] conjunto actual: {len(scope.skus)} SKU")
+    return scope
 
 
-def _guided_flow(section: str, runtime: AgentBrainRuntime, catalogs: CatalogRepository, session_id: int) -> None:
-    product = _guided_product(catalogs)
-    print(f"\nProducto seleccionado: {product.name or product.sku} ({product.sku})")
+def _print_bulk_failures(result: dict) -> None:
+    failures = [
+        item for item in result.get("items", [])
+        if item.get("status") not in {"VERIFIED", "NOOP", "SEO_COMPLETE", "SEO_INCOMPLETE"}
+    ]
+    if failures:
+        print("\nINCIDENCIAS")
+        for item in failures[:20]:
+            print(f"- {item.get('sku')}: {item.get('message') or item.get('status')}")
+        if len(failures) > 20:
+            print(f"... y {len(failures) - 20} incidencia(s) más.")
+
+
+def _print_seo_incomplete(result: dict) -> None:
+    incomplete = [item for item in result.get("items", []) if item.get("status") == "SEO_INCOMPLETE"]
+    if incomplete:
+        print("\nSEO INCOMPLETO")
+        for item in incomplete[:20]:
+            print(f"- {item.get('sku')}: {item.get('message')}")
+        if len(incomplete) > 20:
+            print(f"... y {len(incomplete) - 20} producto(s) incompletos más.")
+
+
+def _guided_flow(
+    section: str,
+    runtime: AgentBrainRuntime,
+    catalogs: CatalogRepository,
+    sessions: SessionRepository,
+    session_id: int,
+    *,
+    dry_run: bool,
+) -> None:
+    scope = _resolve_scope_interactive(catalogs, sessions, session_id)
+    if scope is None:
+        return
 
     if section == "multimedia":
         print("\nMULTIMEDIA")
         print(section_menu_text(section))
-        print("\nAgente> La consulta/estructura de Multimedia está disponible como referencia; la subida y reemplazo de imágenes la conectaremos después para no arriesgar archivos del producto.")
+        print(
+            "\nAgente> El alcance ya quedó seleccionado. La lectura estructural de Multimedia "
+            "está en preparación y la subida/reemplazo de imágenes se conectará después para no arriesgar archivos del producto."
+        )
         return
 
     print()
@@ -71,9 +161,23 @@ def _guided_flow(section: str, runtime: AgentBrainRuntime, catalogs: CatalogRepo
     if not choice or choice == "0":
         print("Agente> Operación cancelada.")
         return
+
     if section == "seo" and choice.casefold() == "v":
-        result = runtime.verify_seo_sku(product.sku)
+        if dry_run:
+            print("\nAgente> Estás en dry-run; no abrí S-TECH. Inicia sin --dry-run para verificar el SEO real.")
+            return
+        print(f"\nVERIFICAR SEO\nAlcance: {scope.label}\nProductos a revisar: {len(scope.skus)}")
+        confirmation = input("Escribe VERIFICAR para continuar o CANCELAR: ").strip().casefold()
+        if confirmation != "verificar":
+            print("Agente> Cancelado. No abrí S-TECH.")
+            return
+        if len(scope.skus) == 1:
+            result = runtime.verify_seo_sku(scope.skus[0])
+        else:
+            result = runtime.verify_seo_skus(scope.skus, scope_label=scope.label)
         print(f"\nAgente> {result['message']}")
+        _print_seo_incomplete(result)
+        _print_bulk_failures(result)
         return
 
     fields = section_fields(section)
@@ -101,19 +205,32 @@ def _guided_flow(section: str, runtime: AgentBrainRuntime, catalogs: CatalogRepo
     for item in selected:
         values[item.key] = input(f"Nuevo valor para {item.label}: ")
 
-    print(confirmation_text(product, values))
+    print(bulk_confirmation_text(scope, values))
     confirmation = input("Confirmación> ").strip().casefold()
     if confirmation != "aceptar":
         print("\nAgente> Cancelado. No abrí ni modifiqué S-TECH.")
         return
+    if dry_run:
+        print("\nAgente> Dry-run confirmado: no abrí S-TECH ni hice cambios.")
+        return
 
-    result = runtime.execute_guided_update(
-        session_id=session_id,
-        sku=product.sku,
-        section=section,
-        values=values,
-    )
+    if len(scope.skus) == 1:
+        result = runtime.execute_guided_update(
+            session_id=session_id,
+            sku=scope.skus[0],
+            section=section,
+            values=values,
+        )
+    else:
+        result = runtime.execute_guided_bulk_update(
+            session_id=session_id,
+            skus=scope.skus,
+            section=section,
+            values=values,
+            scope_label=scope.label,
+        )
     print(f"\nAgente> {result['message']}")
+    _print_bulk_failures(result)
 
 
 def _handle_local_command(
@@ -121,7 +238,9 @@ def _handle_local_command(
     *,
     runtime: AgentBrainRuntime,
     catalogs: CatalogRepository,
+    sessions: SessionRepository,
     session_id: int,
+    dry_run: bool,
 ) -> bool:
     if local == "menu":
         print(main_menu_text())
@@ -130,6 +249,9 @@ def _handle_local_command(
         _print_history(runtime, session_id)
         return True
     if local == "rollback":
+        if dry_run:
+            print("\nAgente> Estás en dry-run; no ejecutaré rollback sobre S-TECH.")
+            return True
         history = runtime.session_history(session_id)
         pending = history["pending_rollback"]
         if not pending:
@@ -145,7 +267,14 @@ def _handle_local_command(
         print(f"\nAgente> {result['message']}")
         return True
     if local.startswith("guided:"):
-        _guided_flow(local.split(":", 1)[1], runtime, catalogs, session_id)
+        _guided_flow(
+            local.split(":", 1)[1],
+            runtime,
+            catalogs,
+            sessions,
+            session_id,
+            dry_run=dry_run,
+        )
         return True
     return False
 
@@ -199,7 +328,14 @@ def main() -> int:
                 break
             if local is not None:
                 try:
-                    if _handle_local_command(local, runtime=runtime, catalogs=catalogs, session_id=session_id):
+                    if _handle_local_command(
+                        local,
+                        runtime=runtime,
+                        catalogs=catalogs,
+                        sessions=sessions,
+                        session_id=session_id,
+                        dry_run=args.dry_run,
+                    ):
                         continue
                 except Exception as exc:
                     print(f"\nAgente> No pude completar esa opción: {type(exc).__name__}: {exc}")
