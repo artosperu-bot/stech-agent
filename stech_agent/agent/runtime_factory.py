@@ -7,7 +7,7 @@ from stech_agent.agent.live_executor import StechLiveExecutor
 from stech_agent.agent.runtime import AgentBrainRuntime
 from stech_agent.config import AgentPaths
 from stech_agent.db.connection import AgentDatabase
-from stech_agent.research.edge_chatgpt import EdgeChatGPTWorker
+from stech_agent.research.runtime_worker import RuntimeEdgeChatGPTWorker
 from stech_agent.seo.progressive import SeoProgressivePreparer
 from stech_agent.seo.publisher import SeoPublisher
 
@@ -26,7 +26,7 @@ def build_live_runtime(
     Browser ownership stays lazy. Constructing the runtime opens neither Chrome
     nor Edge. The same S-TECH live executor is shared by audit and publication;
     Edge/ChatGPT is created only when the first EMPTY/INCOMPLETE SKU needs
-    research.
+    research. The runtime worker validates Selenium before touching Edge.
     """
     logger = log or print
     paths = AgentPaths.default()
@@ -37,7 +37,7 @@ def build_live_runtime(
     raw_dir.mkdir(parents=True, exist_ok=True)
 
     factory = research_worker_factory or (
-        lambda: EdgeChatGPTWorker(
+        lambda: RuntimeEdgeChatGPTWorker(
             raw_dir=raw_dir,
             log_callback=logger,
         )
