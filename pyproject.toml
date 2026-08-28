@@ -12,6 +12,7 @@ dependencies = [
     "playwright>=1.55,<2",
     "openai>=1.101",
     "python-dotenv>=1.0",
+    "selenium>=4.47,<5",
 ]
 
 [project.optional-dependencies]
