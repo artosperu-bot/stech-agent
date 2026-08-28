@@ -59,7 +59,7 @@ def _seo_summary(cls, name: str, sku: str, values: dict[str, Any]):
             missing.append("keywords")
         if not faq_ok:
             missing.append(f"FAQ ({complete_faqs}/{faq_target} completas)")
-        message = f"{display_name} ({sku}): SEO parcial. Falta: {', '.join(missing)}. " + " · ".join(checks)
+        message = f"{display_name} ({sku}): SEO incompleto (parcial). Falta: {', '.join(missing)}. " + " · ".join(checks)
 
     return status, message, {
         "title_ok": title_ok,
@@ -118,8 +118,8 @@ def _verify_seo_skus(self, skus, *, scope_label: str = "Selección") -> dict[str
     overall = "PARTIAL" if errors else "SEO_AUDIT"
     message = (
         f"{scope_label}: {len(complete_skus)} completo(s), "
-        f"{len(incomplete_skus)} parcial(es), {len(empty_skus)} sin SEO, "
-        f"{errors} error(es)."
+        f"{len(incomplete_skus)} incompleto(s) / {len(incomplete_skus)} parcial(es), "
+        f"{len(empty_skus)} sin SEO, {errors} error(es)."
     )
     return {
         "status": overall,
