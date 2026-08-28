@@ -6,7 +6,7 @@ import threading
 from typing import Any
 
 from stech_agent.db.connection import AgentDatabase
-from stech_agent.db.repositories import CatalogRepository
+from stech_agent.db.repositories import AuditRepository, CatalogRepository
 from stech_agent.domain.models import FieldPatch, MutationMode
 from stech_agent.seo.audit import SeoAuditRepository
 from stech_agent.seo.batches import SeoBatchRepository
@@ -35,6 +35,12 @@ def _loads(raw: str | None) -> dict[str, Any]:
 
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _audit_field_value(values: dict[str, Any], field: str) -> Any:
+    if field == "seo_faq":
+        return values.get("seo_faqs", [])
+    return values.get(field)
 
 
 class SeoPublisher:
@@ -76,6 +82,33 @@ class SeoPublisher:
                 """,
                 (int(item_id), _json(before), _json(patch), _json(after), status, error),
             )
+
+    def _record_session_update(
+        self,
+        *,
+        item,
+        name: str,
+        patch: dict[str, Any],
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> None:
+        batch = self.batches.get(item.batch_id)
+        session_id = None if batch is None else batch.get("session_id")
+        if session_id is None or not patch:
+            return
+        fields = list(patch)
+        AuditRepository(self.db).add(
+            "LIVE_UPDATE_VERIFIED",
+            {
+                "command": "AUTO_SEO_FILL_MISSING",
+                "name": name,
+                "fields": fields,
+                "before": {field: _audit_field_value(before, field) for field in fields},
+                "after": {field: _audit_field_value(after, field) for field in fields},
+            },
+            session_id=int(session_id),
+            sku=item.sku,
+        )
 
     @staticmethod
     def _verification_actual(after: dict[str, Any], patch: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -169,6 +202,13 @@ class SeoPublisher:
             self.batches.set_state(item.id, "VERIFIED")
             self.audits.record(item.sku, "SEO_COMPLETE", after, source="stech_live_after_publish")
             self._record_attempt(item.id, before=before, patch=patch, after=after, status="VERIFIED")
+            self._record_session_update(
+                item=item,
+                name=expected_name or item.sku,
+                patch=patch,
+                before=before,
+                after=after,
+            )
             return PublishResult(
                 item.id,
                 item.sku,
