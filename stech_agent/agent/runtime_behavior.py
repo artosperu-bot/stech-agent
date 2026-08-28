@@ -129,6 +129,8 @@ def _verify_seo_skus(
             "incomplete_skus": [],
             "empty_skus": [],
             "working_set_skus": [],
+            "completed_during_audit": 0,
+            "completed_skus": [],
             "prepared_during_audit": 0,
             "preparation_errors": 0,
             "preparation_batch_id": None,
@@ -138,6 +140,7 @@ def _verify_seo_skus(
     complete_skus: list[str] = []
     incomplete_skus: list[str] = []
     empty_skus: list[str] = []
+    completed_skus: list[str] = []
     errors = 0
     prepared = 0
     preparation_errors = 0
@@ -167,7 +170,10 @@ def _verify_seo_skus(
             )
             if preparation:
                 preparation_batch_id = preparation.get("batch_id") or preparation_batch_id
-                if preparation.get("action") in {"PREPARED", "ENQUEUED"}:
+                action = preparation.get("action")
+                if action == "COMPLETED":
+                    completed_skus.append(sku)
+                elif action in {"PREPARED", "ENQUEUED"}:
                     prepared += 1
         except Exception as exc:
             preparation_errors += 1
@@ -193,16 +199,22 @@ def _verify_seo_skus(
             preparation_errors += 1
 
     has_seo_skus = complete_skus + incomplete_skus
-    overall = "PARTIAL" if errors else "SEO_AUDIT"
+    working_set_skus = list(dict.fromkeys(has_seo_skus + completed_skus))
+    overall = "PARTIAL" if errors or preparation_errors else "SEO_AUDIT"
     message = (
-        f"{scope_label}: {len(complete_skus)} completo(s), "
-        f"{len(incomplete_skus)} incompleto(s) / {len(incomplete_skus)} parcial(es), "
+        f"{scope_label}: {len(complete_skus)} ya completo(s), "
+        f"{len(incomplete_skus)} incompleto(s) / parcial(es), "
         f"{len(empty_skus)} sin SEO, {errors} error(es)."
     )
+    if completed_skus:
+        message += (
+            f" Completé y verifiqué {len(completed_skus)} faltante(s) en el momento "
+            "con Edge/ChatGPT + S-TECH."
+        )
     if prepared:
-        message += f" Mientras auditaba envié {prepared} producto(s) a Research/QA en segundo plano."
+        message += f" Dejé {prepared} producto(s) preparados en Research/QA."
     if preparation_errors:
-        message += f" {preparation_errors} preparación(es) quedaron para revisión."
+        message += f" {preparation_errors} producto(s) quedaron para revisión; no forcé esos cambios."
 
     return {
         "status": overall,
@@ -216,7 +228,9 @@ def _verify_seo_skus(
         "complete_skus": complete_skus,
         "incomplete_skus": incomplete_skus,
         "empty_skus": empty_skus,
-        "working_set_skus": has_seo_skus,
+        "working_set_skus": working_set_skus,
+        "completed_during_audit": len(completed_skus),
+        "completed_skus": completed_skus,
         "prepared_during_audit": prepared,
         "preparation_errors": preparation_errors,
         "preparation_batch_id": preparation_batch_id,
@@ -253,10 +267,26 @@ def _execute_seo_read(self, planned: dict[str, Any], decision: PlannerDecision) 
                 finish = preparer.finish()
             except Exception:
                 finish = None
-        if result.get("status") in {"SEO_COMPLETE", "SEO_INCOMPLETE"}:
+
+        action = (preparation or {}).get("action")
+        sku = planned["resolved_skus"][0]
+        if action == "COMPLETED":
+            result = {
+                **result,
+                "status": "SEO_COMPLETED",
+                "message": (
+                    (result.get("message") or "")
+                    + " Lo completé con el prompt SEO V7.2 por Edge/ChatGPT, guardé solo lo faltante y lo verifiqué en S-TECH."
+                ).strip(),
+                "working_set_skus": [sku],
+                "completed_during_audit": 1,
+                "completed_skus": [sku],
+            }
+        elif result.get("status") in {"SEO_COMPLETE", "SEO_INCOMPLETE"}:
             result = {**result, "working_set_skus": list(result.get("resolved_skus") or [])}
         elif result.get("status") == "SEO_EMPTY":
             result = {**result, "working_set_skus": []}
+
         return {
             **result,
             "preparation": preparation,
@@ -273,9 +303,9 @@ def _execute_seo_read(self, planned: dict[str, Any], decision: PlannerDecision) 
         **planned,
         **audit,
         "dry_run": False,
-        "executed": False,
+        "executed": bool(audit.get("completed_during_audit")),
         "examined_skus": examined,
-        "resolved_skus": list(audit.get("has_seo_skus") or []),
+        "resolved_skus": list(audit.get("working_set_skus") or []),
     }
 
 
@@ -297,7 +327,7 @@ def _execute(self, command: str, *, session_id: int | None = None) -> dict[str, 
 
 
 def install_runtime_behavior() -> None:
-    if getattr(AgentBrainRuntime, "_stech_runtime_behavior_v3", False):
+    if getattr(AgentBrainRuntime, "_stech_runtime_behavior_v4", False):
         return
     AgentBrainRuntime.__init__ = _init
     AgentBrainRuntime.close = _close
@@ -305,4 +335,4 @@ def install_runtime_behavior() -> None:
     AgentBrainRuntime.verify_seo_skus = _verify_seo_skus
     AgentBrainRuntime._execute_seo_read = _execute_seo_read
     AgentBrainRuntime.execute = _execute
-    AgentBrainRuntime._stech_runtime_behavior_v3 = True
+    AgentBrainRuntime._stech_runtime_behavior_v4 = True
