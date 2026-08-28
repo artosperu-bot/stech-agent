@@ -76,7 +76,14 @@ def extract_json_object(raw: str) -> dict[str, Any]:
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"JSON inválido: {exc}") from exc
+        # ChatGPT can occasionally place a raw newline/tab inside a JSON string.
+        # Python's strict decoder rejects that even though the object is otherwise
+        # structurally valid. Retry only with control-character tolerance; broken
+        # JSON syntax still raises and is never accepted silently.
+        try:
+            data = json.loads(text, strict=False)
+        except json.JSONDecodeError:
+            raise ValueError(f"JSON inválido: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError("La respuesta JSON debe ser un objeto")
     return data
