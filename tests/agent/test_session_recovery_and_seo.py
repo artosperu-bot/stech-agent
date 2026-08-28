@@ -51,7 +51,13 @@ class FakeLiveExecutor:
 
     def read_fields(self, *, sku, fields, expected_name=None):
         self.reads.append((sku, tuple(fields)))
-        return {field: self.current[sku].get(field) for field in fields}
+        result = {}
+        for field in fields:
+            if field == "seo_faq":
+                result["seo_faqs"] = self.current[sku].get("seo_faqs", [])
+            else:
+                result[field] = self.current[sku].get(field)
+        return result
 
     def restore_if_unchanged(self, *, sku, expected_name, expected_current, restore_values):
         self.restores.append((sku, dict(expected_current), dict(restore_values)))
