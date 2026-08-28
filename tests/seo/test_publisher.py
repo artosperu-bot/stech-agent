@@ -5,7 +5,7 @@ import json
 from stech_agent.catalog.reader import CatalogSnapshotData
 from stech_agent.db.connection import AgentDatabase
 from stech_agent.db.migrations import migrate
-from stech_agent.db.repositories import CatalogRepository
+from stech_agent.db.repositories import AuditRepository, CatalogRepository, SessionRepository
 from stech_agent.domain.models import ProductRecord
 from stech_agent.seo.audit import SeoAuditRepository
 from stech_agent.seo.batches import SeoBatchRepository
@@ -58,7 +58,7 @@ class FakeLive:
         }
 
 
-def _setup(tmp_path):
+def _setup(tmp_path, *, with_session: bool = False):
     db = AgentDatabase(tmp_path / "agent.sqlite3")
     migrate(db)
     CatalogRepository(db).save_snapshot(CatalogSnapshotData(
@@ -66,8 +66,9 @@ def _setup(tmp_path):
         products=(ProductRecord(sku="A", name="Producto A", source_order=1),),
         source_path="fixture.xlsx", checksum="fixture",
     ))
+    session_id = SessionRepository(db).create_session() if with_session else None
     repo = SeoBatchRepository(db)
-    batch = repo.create(None, ["A"], {}, True)
+    batch = repo.create(session_id, ["A"], {}, True)
     item = repo.list_items(batch)[0]
     with db.transaction(immediate=True) as con:
         con.execute(
@@ -75,11 +76,11 @@ def _setup(tmp_path):
             (item.id, json.dumps({}), json.dumps(_generated()), json.dumps({"seo_title":"stale"}), "READY", json.dumps([])),
         )
         con.execute("UPDATE seo_batch_items SET state='READY' WHERE id=?", (item.id,))
-    return db, item
+    return db, item, session_id
 
 
 def test_publisher_re_reads_and_preserves_manual_title_added_after_staging(tmp_path):
-    db, item = _setup(tmp_path)
+    db, item, _ = _setup(tmp_path)
     live = FakeLive({"seo_title":"Título agregado manualmente", "seo_description":"", "seo_keywords":"", "seo_faqs":[]})
 
     result = SeoPublisher(db, live).publish(item.id)
@@ -97,7 +98,7 @@ def test_publisher_re_reads_and_preserves_manual_title_added_after_staging(tmp_p
 
 
 def test_publisher_noops_if_product_became_complete_before_publish(tmp_path):
-    db, item = _setup(tmp_path)
+    db, item, _ = _setup(tmp_path)
     live = FakeLive({
         "seo_title":"Manual", "seo_description":"Manual desc", "seo_keywords":"manual",
         "seo_faqs":[{"question":"Q1","answer":"A1"},{"question":"Q2","answer":"A2"},{"question":"Q3","answer":"A3"}],
@@ -114,7 +115,7 @@ def test_publisher_noops_if_product_became_complete_before_publish(tmp_path):
 
 
 def test_publisher_marks_verify_error_when_live_writer_does_not_verify(tmp_path):
-    db, item = _setup(tmp_path)
+    db, item, _ = _setup(tmp_path)
     live = FakeLive({"seo_title":"", "seo_description":"", "seo_keywords":"", "seo_faqs":[]})
     live.update_status = "REVIEW"
 
@@ -125,3 +126,34 @@ def test_publisher_marks_verify_error_when_live_writer_does_not_verify(tmp_path)
     with db.connect() as con:
         attempt = con.execute("SELECT status FROM seo_publish_attempts WHERE batch_item_id=? ORDER BY id DESC", (item.id,)).fetchone()
     assert attempt["status"] == "VERIFY_ERROR"
+
+
+def test_verified_publish_records_session_change_with_rollback_compatible_faq_keys(tmp_path):
+    db, item, session_id = _setup(tmp_path, with_session=True)
+    live = FakeLive({"seo_title":"Manual", "seo_description":"", "seo_keywords":"", "seo_faqs":[]})
+
+    result = SeoPublisher(db, live).publish(item.id)
+
+    assert result.status == "VERIFIED"
+    events = AuditRepository(db).list_session(session_id, event_types=("LIVE_UPDATE_VERIFIED",))
+    assert len(events) == 1
+    event = events[0]
+    assert event["sku"] == "A"
+    payload = event["payload"]
+    assert payload["command"] == "AUTO_SEO_FILL_MISSING"
+    assert payload["name"] == "Producto A"
+    assert "seo_title" not in payload["fields"]
+    assert set(payload["fields"]) == {"seo_description", "seo_keywords", "seo_faq"}
+    assert payload["before"]["seo_faq"] == []
+    assert payload["after"]["seo_faq"] == live.current["seo_faqs"]
+
+
+def test_noop_publish_does_not_create_session_change_event(tmp_path):
+    db, item, session_id = _setup(tmp_path, with_session=True)
+    live = FakeLive({
+        "seo_title":"Manual", "seo_description":"Manual desc", "seo_keywords":"manual",
+        "seo_faqs":[{"question":"Q1","answer":"A1"},{"question":"Q2","answer":"A2"},{"question":"Q3","answer":"A3"}],
+    })
+
+    assert SeoPublisher(db, live).publish(item.id).status == "NOOP"
+    assert AuditRepository(db).list_session(session_id, event_types=("LIVE_UPDATE_VERIFIED",)) == []
