@@ -17,6 +17,7 @@ DIRECT_LIVE_FIELDS = frozenset({
     "seo_title",
     "seo_description",
     "seo_keywords",
+    "seo_faq",
 })
 
 SEO_READ_FIELDS = frozenset({
