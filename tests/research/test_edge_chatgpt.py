@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from stech_agent.research.edge_chatgpt import (
+    EdgeChatGPTWorker,
     choose_body_response_candidate,
     composer_prompt_text,
     looks_auth_gate,
@@ -53,3 +56,19 @@ def test_body_candidate_never_returns_prompt_json_template():
     body = prompt + "\n" + json.dumps(answer, ensure_ascii=False)
     chosen = choose_body_response_candidate(body, prompt)
     assert json.loads(chosen)["modelo"] == "Charge 6"
+
+
+def test_missing_selenium_is_detected_before_edge_is_launched(tmp_path, monkeypatch):
+    worker = EdgeChatGPTWorker(raw_dir=tmp_path)
+    launched: list[int] = []
+
+    def missing_selenium():
+        raise RuntimeError("Falta Selenium. Ejecuta pip install -e '.[dev]' nuevamente.")
+
+    monkeypatch.setattr(worker, "_selenium", missing_selenium)
+    monkeypatch.setattr(worker, "_launch_real_edge", lambda port: launched.append(port))
+
+    with pytest.raises(RuntimeError, match="Falta Selenium"):
+        worker.start()
+
+    assert launched == []
