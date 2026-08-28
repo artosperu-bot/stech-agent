@@ -140,14 +140,17 @@ class StechLiveExecutor:
             fields=tuple(expected_current),
             expected_name=expected_name,
         )
-        check = compare_expected_fields(actual, expected_current)
+        actual_for_compare = dict(actual)
+        if "seo_faq" in expected_current and "seo_faq" not in actual_for_compare:
+            actual_for_compare["seo_faq"] = actual_for_compare.get("seo_faqs", [])
+        check = compare_expected_fields(actual_for_compare, expected_current)
         if not check.ok:
             return {
                 "status": "CONFLICT",
                 "sku": str(sku),
                 "name": expected_name or "",
-                "before": actual,
-                "after": actual,
+                "before": actual_for_compare,
+                "after": actual_for_compare,
                 "changed_fields": [],
             }
 
