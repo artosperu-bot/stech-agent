@@ -62,6 +62,11 @@ class AgentBrainRuntime:
                 exc.question,
                 candidate_skus=exc.candidate_skus,
             )
+        except (ValueError, KeyError) as exc:
+            return self._clarification_result(
+                decision,
+                f"El plan contiene un campo o valor que no puedo validar con seguridad: {exc}",
+            )
 
         authorized_fields = []
         if resolved.patch is not None:
