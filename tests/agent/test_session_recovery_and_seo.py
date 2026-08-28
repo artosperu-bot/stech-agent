@@ -5,7 +5,7 @@ from stech_agent.agent.schema import PlannerDecision
 from stech_agent.catalog.reader import CatalogSnapshotData
 from stech_agent.db.connection import AgentDatabase
 from stech_agent.db.migrations import migrate
-from stech_agent.db.repositories import AuditRepository, CatalogRepository, SessionRepository
+from stech_agent.db.repositories import CatalogRepository, SessionRepository
 from stech_agent.domain.models import ProductRecord
 
 
@@ -84,8 +84,8 @@ def _decision(action="UPDATE_FIELDS", *, use_working_set=False, section="pricing
             "all_products": False,
         },
         "section": section,
-        "fields": fields or ["stock"],
-        "values": values or {"stock": 2},
+        "fields": fields if fields is not None else ["stock"],
+        "values": values if values is not None else {"stock": 2},
         "mode": "READ" if action == "READ" else "PATCH",
         "research_required": False,
         "clarification_required": False,
