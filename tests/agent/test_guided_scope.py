@@ -14,7 +14,15 @@ def _products():
         ProductRecord(sku="J1", name="JBL Uno", brand="JBL", category="Audio", subcategory="Parlantes", source_order=1),
         ProductRecord(sku="J2", name="JBL Dos", brand="JBL", category="Audio", subcategory="Audífonos", source_order=2),
         ProductRecord(sku="E1", name="Epson Uno", brand="EPSON", category="Impresión", subcategory="Impresoras", source_order=3),
-        ProductRecord(sku="AMB", name="JBL Ambiguo", brand="JBL", category="Audio", subcategory="Parlantes", ambiguous=True, source_order=4),
+        ProductRecord(
+            sku="AMB",
+            name="JBL Ambiguo",
+            brand="JBL",
+            category="Audio",
+            subcategory="Parlantes",
+            conflict_fields=frozenset({"stock"}),
+            source_order=4,
+        ),
     ]
 
 
