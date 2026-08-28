@@ -6,7 +6,6 @@ import pytest
 
 import stech_agent.research.edge_chatgpt as edge_module
 from stech_agent.research.edge_chatgpt import (
-    EdgeChatGPTWorker,
     choose_body_response_candidate,
     composer_prompt_text,
     looks_auth_gate,
@@ -15,6 +14,7 @@ from stech_agent.research.edge_chatgpt import (
     looks_transient,
     prompt_delivery_matches,
 )
+from stech_agent.research.runtime_worker import RuntimeEdgeChatGPTWorker
 
 
 def test_composer_flattens_newlines_so_selenium_does_not_submit_first_line():
@@ -60,7 +60,7 @@ def test_body_candidate_never_returns_prompt_json_template():
 
 
 def test_missing_selenium_is_detected_before_edge_discovery_or_launch(tmp_path, monkeypatch):
-    worker = EdgeChatGPTWorker(raw_dir=tmp_path)
+    worker = RuntimeEdgeChatGPTWorker(raw_dir=tmp_path)
     edge_discovery_calls: list[str] = []
     launched: list[int] = []
 
