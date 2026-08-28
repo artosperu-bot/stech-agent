@@ -20,6 +20,7 @@ from stech_agent.agent.guided_menu import (
 from stech_agent.agent.openai_brain import OpenAIPlanner
 from stech_agent.agent.product_creation import prepare_new_product
 from stech_agent.agent.runtime import AgentBrainRuntime
+from stech_agent.agent.runtime_factory import build_live_runtime
 from stech_agent.catalog.reader import read_items_export
 from stech_agent.db.connection import AgentDatabase
 from stech_agent.db.migrations import migrate
@@ -273,15 +274,19 @@ def _guided_flow(
             print("\nAgente> Estás en dry-run; no abrí S-TECH. Inicia sin --dry-run para verificar el SEO real.")
             return
         print(f"\nVERIFICAR SEO\nAlcance: {scope.label}\nProductos a revisar: {len(scope.skus)}")
+        print("Los productos con SEO vacío/parcial se enviarán a Research/QA en segundo plano mientras la auditoría continúa.")
         confirmation = input("Escribe VERIFICAR para continuar o CANCELAR: ").strip().casefold()
         if confirmation != "verificar":
             print("Agente> Cancelado. No abrí S-TECH.")
             return
-        if len(scope.skus) == 1:
-            result = runtime.verify_seo_sku(scope.skus[0])
-        else:
-            result = runtime.verify_seo_skus(scope.skus, scope_label=scope.label)
+        result = runtime.verify_seo_skus(
+            scope.skus,
+            scope_label=scope.label,
+            session_id=session_id,
+        )
         print(f"\nAgente> {result['message']}")
+        if result.get("preparation_batch_id"):
+            print(f"[SEO] Lote de preparación: {result['preparation_batch_id']}")
         _print_seo_incomplete(result)
         _print_bulk_failures(result)
         return
@@ -417,7 +422,8 @@ def main() -> int:
     sessions = SessionRepository(db)
     session_id = args.session_id or sessions.create_session({"source": "stech_agent_chat.py"})
     settings = PlannerSettings.from_env()
-    runtime = AgentBrainRuntime(db, OpenAIPlanner(settings))
+    planner = OpenAIPlanner(settings)
+    runtime = AgentBrainRuntime(db, planner) if args.dry_run else build_live_runtime(db, planner)
 
     print(f"[MODELO] {settings.model}")
     print(f"[SESIÓN] {session_id}")
@@ -425,6 +431,7 @@ def main() -> int:
     print("Usa 'salir' para terminar.")
     if not args.dry_run:
         print("El navegador se abrirá automáticamente solo cuando una orden requiera leer o cambiar datos reales en S-TECH.")
+        print("En auditorías SEO, Edge/ChatGPT se abrirá recién al encontrar el primer SEO vacío/parcial y preparará Research/QA en segundo plano.")
 
     try:
         while True:
@@ -467,6 +474,8 @@ def main() -> int:
                 else:
                     message = result.get("message") or "Orden procesada."
                 print(f"\nAgente> {message}")
+                if result.get("preparation_batch_id"):
+                    print(f"[SEO] Lote de preparación: {result['preparation_batch_id']}")
 
                 decision_data = result.get("decision") or {}
                 if result.get("resolved_skus") and not decision_data.get("clarification_required"):
