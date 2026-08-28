@@ -33,6 +33,7 @@ class ResolvedPlan:
     skus: tuple[str, ...]
     query_explanation: str
     patch: FieldPatch | None = None
+    blocked_skus: tuple[str, ...] = ()
 
 
 def _has_explicit_selector(decision: PlannerDecision) -> bool:
@@ -111,16 +112,28 @@ def resolve_decision(
             "El objetivo indicado no coincide con ningún producto del catálogo actual. No se ejecutará ningún cambio."
         )
 
+    resolved_skus = tuple(result.skus)
+    blocked_skus: tuple[str, ...] = ()
     if decision.action in _MUTATING_ACTIONS and result.skus:
         by_sku = {product.sku: product for product in product_list}
         ambiguous = tuple(
             sku for sku in result.skus if sku in by_sku and by_sku[sku].ambiguous
         )
         if ambiguous:
-            raise ResolutionNeedsClarification(
-                "Hay productos seleccionados con filas duplicadas o datos conflictivos en el export. Deben resolverse antes de modificar S-TECH.",
-                candidate_skus=ambiguous,
-            )
+            if decision.action is ActionType.GENERATE_SEO:
+                blocked_skus = ambiguous
+                blocked_set = set(ambiguous)
+                resolved_skus = tuple(sku for sku in result.skus if sku not in blocked_set)
+                if not resolved_skus:
+                    raise ResolutionNeedsClarification(
+                        "Todos los productos seleccionados para SEO tienen filas duplicadas o datos conflictivos en el export. No hay SKU seguro para procesar.",
+                        candidate_skus=ambiguous,
+                    )
+            else:
+                raise ResolutionNeedsClarification(
+                    "Hay productos seleccionados con filas duplicadas o datos conflictivos en el export. Deben resolverse antes de modificar S-TECH.",
+                    candidate_skus=ambiguous,
+                )
 
     patch: FieldPatch | None = None
     if decision.section is not None:
@@ -158,7 +171,8 @@ def resolve_decision(
     return ResolvedPlan(
         decision=decision,
         target=target,
-        skus=tuple(result.skus),
+        skus=resolved_skus,
         query_explanation=result.explanation,
         patch=patch,
+        blocked_skus=blocked_skus,
     )
