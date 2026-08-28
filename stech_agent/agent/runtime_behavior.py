@@ -152,6 +152,9 @@ def _verify_seo_skus(
             "incomplete": 0,
             "empty": 0,
             "errors": 0,
+            "workflow_errors": 0,
+            "workflow_error_states": {},
+            "workflow_error_skus": [],
             "message": "No hay productos para verificar.",
             "items": [],
             "has_seo_skus": [],
@@ -171,6 +174,8 @@ def _verify_seo_skus(
     incomplete_skus: list[str] = []
     empty_skus: list[str] = []
     completed_skus: list[str] = []
+    workflow_error_skus: list[str] = []
+    workflow_error_states: dict[str, int] = {}
     errors = 0
     prepared = 0
     preparation_errors = 0
@@ -205,6 +210,10 @@ def _verify_seo_skus(
                     completed_skus.append(sku)
                 elif action in {"PREPARED", "ENQUEUED"}:
                     prepared += 1
+                elif action == "REVIEW":
+                    workflow_error_skus.append(sku)
+                    state = str(preparation.get("state") or "REVIEW")
+                    workflow_error_states[state] = workflow_error_states.get(state, 0) + 1
         except Exception as exc:
             preparation_errors += 1
             preparation = {
@@ -228,13 +237,14 @@ def _verify_seo_skus(
         except Exception:
             preparation_errors += 1
 
+    workflow_errors = len(workflow_error_skus)
     has_seo_skus = complete_skus + incomplete_skus
     working_set_skus = list(dict.fromkeys(has_seo_skus + completed_skus))
-    overall = "PARTIAL" if errors or preparation_errors else "SEO_AUDIT"
+    overall = "PARTIAL" if errors or preparation_errors or workflow_errors else "SEO_AUDIT"
     message = (
         f"{scope_label}: {len(complete_skus)} completo(s), "
         f"{len(incomplete_skus)} incompleto(s) / {len(incomplete_skus)} parcial(es), "
-        f"{len(empty_skus)} sin SEO, {errors} error(es)."
+        f"{len(empty_skus)} sin SEO, {errors} error(es) de lectura S-TECH."
     )
     if completed_skus:
         message += (
@@ -243,8 +253,14 @@ def _verify_seo_skus(
         )
     if prepared:
         message += f" Dejé {prepared} producto(s) preparados en Research/QA."
+    if workflow_errors:
+        states = ", ".join(f"{state}: {count}" for state, count in sorted(workflow_error_states.items()))
+        message += (
+            f" {workflow_errors} producto(s) fallaron o quedaron para revisión en "
+            f"Research/QA/publicación ({states}); no forcé esos cambios."
+        )
     if preparation_errors:
-        message += f" {preparation_errors} producto(s) quedaron para revisión; no forcé esos cambios."
+        message += f" {preparation_errors} error(es) internos de preparación; no forcé esos cambios."
 
     return {
         "status": overall,
@@ -252,6 +268,9 @@ def _verify_seo_skus(
         "incomplete": len(incomplete_skus),
         "empty": len(empty_skus),
         "errors": errors,
+        "workflow_errors": workflow_errors,
+        "workflow_error_states": workflow_error_states,
+        "workflow_error_skus": workflow_error_skus,
         "message": message,
         "items": items,
         "has_seo_skus": has_seo_skus,
@@ -393,7 +412,8 @@ def _execute_generate_seo(self, planned: dict[str, Any], decision: PlannerDecisi
         "examined_skus": examined,
         "blocked_skus": blocked,
         "blocked_ambiguous": len(blocked),
-        "resolved_skus": list(audit.get("working_set_skus") or []),
+        "working_set_skus": examined,
+        "resolved_skus": examined,
     }
 
 
@@ -429,7 +449,7 @@ def _execute(self, command: str, *, session_id: int | None = None) -> dict[str, 
 
 
 def install_runtime_behavior() -> None:
-    if getattr(AgentBrainRuntime, "_stech_runtime_behavior_v5", False):
+    if getattr(AgentBrainRuntime, "_stech_runtime_behavior_v6", False):
         return
     AgentBrainRuntime.__init__ = _init
     AgentBrainRuntime.close = _close
@@ -438,4 +458,4 @@ def install_runtime_behavior() -> None:
     AgentBrainRuntime.verify_seo_skus = _verify_seo_skus
     AgentBrainRuntime._execute_seo_read = _execute_seo_read
     AgentBrainRuntime.execute = _execute
-    AgentBrainRuntime._stech_runtime_behavior_v5 = True
+    AgentBrainRuntime._stech_runtime_behavior_v6 = True
