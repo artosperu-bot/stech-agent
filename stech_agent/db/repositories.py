@@ -179,3 +179,29 @@ class AuditRepository:
         with self.db.transaction(immediate=True) as con:
             cur = con.execute("INSERT INTO audit_events(session_id, task_id, event_type, sku, payload_json) VALUES (?, ?, ?, ?, ?)", (session_id, task_id, event_type, sku, _dumps(payload)))
             return int(cur.lastrowid)
+
+    def list_session(self, session_id: int, *, event_types: tuple[str, ...] | None = None, newest_first: bool = False) -> list[dict[str, Any]]:
+        params: list[Any] = [int(session_id)]
+        where = "session_id=?"
+        if event_types:
+            placeholders = ",".join("?" for _ in event_types)
+            where += f" AND event_type IN ({placeholders})"
+            params.extend(event_types)
+        order = "DESC" if newest_first else "ASC"
+        with self.db.connect() as con:
+            rows = con.execute(
+                f"SELECT id, session_id, task_id, event_type, sku, payload_json, created_at FROM audit_events WHERE {where} ORDER BY id {order}",
+                tuple(params),
+            ).fetchall()
+        return [
+            {
+                "id": int(row["id"]),
+                "session_id": row["session_id"],
+                "task_id": row["task_id"],
+                "event_type": row["event_type"],
+                "sku": row["sku"],
+                "payload": _loads(row["payload_json"], {}),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
