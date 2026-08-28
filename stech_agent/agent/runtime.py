@@ -370,6 +370,57 @@ class AgentBrainRuntime:
             "seo_checks": checks,
         }
 
+    def verify_seo_skus(self, skus, *, scope_label: str = "Selección") -> dict[str, Any]:
+        clean_skus = tuple(dict.fromkeys(str(sku).strip() for sku in skus if str(sku).strip()))
+        if not clean_skus:
+            return {
+                "status": "BLOCKED",
+                "complete": 0,
+                "incomplete": 0,
+                "errors": 0,
+                "message": "No hay productos para verificar.",
+                "items": [],
+            }
+
+        items = []
+        complete = 0
+        incomplete = 0
+        errors = 0
+        for sku in clean_skus:
+            result = self.verify_seo_sku(sku)
+            status = result.get("status")
+            if status == "SEO_COMPLETE":
+                complete += 1
+            elif status == "SEO_INCOMPLETE":
+                incomplete += 1
+            else:
+                errors += 1
+            items.append({
+                "sku": sku,
+                "status": status,
+                "message": result.get("message") or "",
+                "seo_checks": result.get("seo_checks") or {},
+            })
+
+        if errors:
+            overall = "PARTIAL"
+        elif incomplete:
+            overall = "SEO_INCOMPLETE"
+        else:
+            overall = "SEO_COMPLETE"
+        message = (
+            f"{scope_label}: {complete} completo(s), {incomplete} incompleto(s), "
+            f"{errors} error(es)."
+        )
+        return {
+            "status": overall,
+            "complete": complete,
+            "incomplete": incomplete,
+            "errors": errors,
+            "message": message,
+            "items": items,
+        }
+
     def _execute_seo_read(self, planned: dict[str, Any], decision: PlannerDecision) -> dict[str, Any]:
         if planned.get("count") != 1:
             return {
@@ -516,6 +567,71 @@ class AgentBrainRuntime:
             "before": outcome.get("before") or {},
             "after": outcome.get("after") or {},
             "audit_event_id": audit_event_id,
+        }
+
+    def execute_guided_bulk_update(
+        self,
+        *,
+        session_id: int | None,
+        skus,
+        section: str,
+        values: dict[str, Any],
+        scope_label: str = "Selección",
+    ) -> dict[str, Any]:
+        clean_skus = tuple(dict.fromkeys(str(sku).strip() for sku in skus if str(sku).strip()))
+        if not clean_skus:
+            return {
+                "status": "BLOCKED",
+                "success": 0,
+                "unchanged": 0,
+                "failed": 0,
+                "message": "No hay productos para modificar.",
+                "items": [],
+            }
+
+        success = 0
+        unchanged = 0
+        failed = 0
+        items = []
+        for sku in clean_skus:
+            result = self.execute_guided_update(
+                session_id=session_id,
+                sku=sku,
+                section=section,
+                values=values,
+            )
+            status = result.get("status")
+            if status == "VERIFIED":
+                success += 1
+            elif status == "NOOP":
+                unchanged += 1
+            else:
+                failed += 1
+            items.append({
+                "sku": sku,
+                "status": status,
+                "message": result.get("message") or "",
+                "audit_event_id": result.get("audit_event_id"),
+            })
+
+        if failed and (success or unchanged):
+            overall = "PARTIAL"
+        elif failed:
+            overall = "ERROR"
+        else:
+            overall = "VERIFIED"
+        message = (
+            f"{scope_label}: {success} actualizado(s), {unchanged} sin cambios, "
+            f"{failed} error(es). Cada resultado fue verificado individualmente."
+        )
+        return {
+            "status": overall,
+            "success": success,
+            "unchanged": unchanged,
+            "failed": failed,
+            "message": message,
+            "items": items,
+            "resolved_skus": list(clean_skus),
         }
 
     def execute(self, command: str, *, session_id: int | None = None) -> dict[str, Any]:
