@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 
 from stech_agent.agent.runtime import AgentBrainRuntime
 from stech_agent.catalog.reader import CatalogSnapshotData
@@ -40,10 +41,12 @@ def _generated(name: str):
 class FakeResearch:
     def __init__(self):
         self.calls: list[str] = []
+        self.thread_names: list[str] = []
 
     def generate(self, product):
         sku = product["sku"]
         self.calls.append(sku)
+        self.thread_names.append(threading.current_thread().name)
         return ResearchSeoResult(
             payload=_generated(product["name"]),
             raw_text="{}",
@@ -103,7 +106,7 @@ def test_complete_audit_is_cached_without_starting_research(tmp_path):
     assert SeoAuditRepository(db).get("C")["status"] == "SEO_COMPLETE"
 
 
-def test_first_missing_product_is_researched_immediately_and_left_ready(tmp_path):
+def test_first_missing_product_is_enqueued_and_researched_in_background(tmp_path):
     db = _db(tmp_path)
     research = FakeResearch()
     preparer = SeoProgressivePreparer(db, research_worker_factory=lambda: research, work_dir=tmp_path)
@@ -113,12 +116,14 @@ def test_first_missing_product_is_researched_immediately_and_left_ready(tmp_path
         session_id=None, scope={"brand": "JBL"},
     )
 
-    assert research.calls == ["A"]
-    assert result["action"] == "PREPARED"
-    assert result["state"] == "READY"
+    assert result["action"] == "ENQUEUED"
     assert preparer.batch_id is not None
+    assert preparer.wait_until_idle(timeout=3.0) is True
+    assert research.calls == ["A"]
+    assert research.thread_names and research.thread_names[0] != threading.current_thread().name
     assert SeoBatchRepository(db).list_items(preparer.batch_id)[0].state == "READY"
     assert (tmp_path / f"seo_batch_{preparer.batch_id}.xlsx").exists()
+    preparer.close()
 
 
 def test_next_missing_product_joins_same_batch_without_reprocessing_previous(tmp_path):
@@ -126,18 +131,21 @@ def test_next_missing_product_joins_same_batch_without_reprocessing_previous(tmp
     research = FakeResearch()
     preparer = SeoProgressivePreparer(db, research_worker_factory=lambda: research, work_dir=tmp_path)
 
-    preparer.accept_audit(sku="A", status="SEO_EMPTY", values=_empty(), session_id=None, scope={"brand": "JBL"})
+    first = preparer.accept_audit(sku="A", status="SEO_EMPTY", values=_empty(), session_id=None, scope={"brand": "JBL"})
     first_batch = preparer.batch_id
-    preparer.accept_audit(
+    second = preparer.accept_audit(
         sku="B", status="SEO_INCOMPLETE",
         values={"seo_title": "Manual", "seo_description": "", "seo_keywords": "", "seo_faqs": []},
         session_id=None, scope={"brand": "JBL"},
     )
 
+    assert first["action"] == second["action"] == "ENQUEUED"
     assert preparer.batch_id == first_batch
+    assert preparer.wait_until_idle(timeout=3.0) is True
     assert research.calls == ["A", "B"]
     items = SeoBatchRepository(db).list_items(first_batch)
     assert [(item.sku, item.state) for item in items] == [("A", "READY"), ("B", "READY")]
+    preparer.close()
 
 
 def test_runtime_bulk_audit_feeds_preparer_after_each_sku(tmp_path):
@@ -147,9 +155,9 @@ def test_runtime_bulk_audit_feeds_preparer_after_each_sku(tmp_path):
         def __init__(self): self.calls = []
         def accept_audit(self, **kwargs):
             self.calls.append((kwargs["sku"], kwargs["status"]))
-            action = "PREPARED" if kwargs["status"] in {"SEO_EMPTY", "SEO_INCOMPLETE"} else "SKIP_COMPLETE"
+            action = "ENQUEUED" if kwargs["status"] in {"SEO_EMPTY", "SEO_INCOMPLETE"} else "SKIP_COMPLETE"
             return {"action": action}
-        def finish(self): return {"batch_id": None}
+        def finish(self): return {"batch_id": 44, "status": "RUNNING", "states": {}}
 
     recorder = Recorder()
     runtime = AgentBrainRuntime(db, planner=object(), seo_preparer=recorder)
@@ -168,3 +176,4 @@ def test_runtime_bulk_audit_feeds_preparer_after_each_sku(tmp_path):
         ("C", "SEO_COMPLETE"),
     ]
     assert output["prepared_during_audit"] == 2
+    assert output["preparation_batch_id"] == 44
