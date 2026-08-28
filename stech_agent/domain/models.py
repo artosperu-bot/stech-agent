@@ -84,6 +84,7 @@ class ProductRecord:
 @dataclass(frozen=True, slots=True)
 class TargetSpec:
     skus: tuple[str, ...] = ()
+    name: str | None = None
     brand: str | None = None
     category: str | None = None
     subcategory: str | None = None
