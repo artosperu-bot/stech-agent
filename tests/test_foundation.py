@@ -8,7 +8,7 @@ from stech_agent.catalog.query import query_products
 from stech_agent.catalog.reader import CatalogSnapshotData, read_items_export
 from stech_agent.cli import main
 from stech_agent.db.connection import AgentDatabase
-from stech_agent.db.migrations import migrate
+from stech_agent.db.migrations import MIGRATIONS, migrate
 from stech_agent.db.repositories import AuditRepository, CatalogRepository, SessionRepository, TaskRepository
 from stech_agent.domain.fields import coerce_field, resolve_header
 from stech_agent.domain.models import ActionType, AgentPlan, FieldPatch, ProductRecord, RiskLevel, TargetSpec
@@ -107,7 +107,8 @@ def test_migration_uses_wal_full_and_is_idempotent(tmp_path):
     with db.connect() as con:
         assert con.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
         assert con.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert con.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 1
+        applied = con.execute("SELECT version, filename FROM schema_migrations ORDER BY version").fetchall()
+        assert [(r[0], r[1]) for r in applied] == list(MIGRATIONS)
         tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"catalog_snapshots", "catalog_products", "working_sets", "tasks", "task_items", "audit_events", "changesets", "prompt_runs"} <= tables
 
