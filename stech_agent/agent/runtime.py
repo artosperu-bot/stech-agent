@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from stech_agent.agent.resolver import ResolutionNeedsClarification, resolve_decision
 from stech_agent.agent.schema import PlannerDecision
+from stech_agent.config import AgentPaths
 from stech_agent.db.connection import AgentDatabase
 from stech_agent.db.repositories import AuditRepository, CatalogRepository, SessionRepository
 from stech_agent.domain.fields import coerce_field
 from stech_agent.domain.models import ActionType, MutationMode
 from stech_agent.domain.scopes import build_scoped_patch, resolve_field_path, resolve_section
+from stech_agent.stech.import_certification import require_mass_import_certified
 from stech_agent.stech.product_writer import UnsupportedLiveField
 
 
@@ -28,10 +31,18 @@ _LIVE_ROLLBACK_EVENT = "LIVE_ROLLBACK_VERIFIED"
 
 
 class AgentBrainRuntime:
-    def __init__(self, db: AgentDatabase, planner: Any, *, live_executor: Any | None = None):
+    def __init__(
+        self,
+        db: AgentDatabase,
+        planner: Any,
+        *,
+        live_executor: Any | None = None,
+        work_dir: str | Path | None = None,
+    ):
         self.db = db
         self.planner = planner
         self.live_executor = live_executor
+        self.work_dir = Path(work_dir) if work_dir is not None else AgentPaths.default().app_data / "work"
 
     @staticmethod
     def _clarification_result(decision, question: str, *, candidate_skus=()) -> dict[str, Any]:
@@ -181,6 +192,35 @@ class AgentBrainRuntime:
 
             self.live_executor = StechLiveExecutor()
         return self.live_executor
+
+    def create_product(self, values: dict[str, Any], *, session_id: int | None = None) -> dict[str, Any]:
+        try:
+            require_mass_import_certified(self.db)
+        except RuntimeError as exc:
+            return {
+                "status": "IMPORT_NOT_CERTIFIED",
+                "created": False,
+                "sku": str(values.get("sku") or "").strip(),
+                "message": (
+                    "No abrí S-TECH ni importé nada. El importador Agregar / Actualizar todavía no está "
+                    f"certificado en esta PC: {exc}"
+                ),
+            }
+        try:
+            return self._ensure_live_executor().create_product(
+                db=self.db,
+                catalog_repository=CatalogRepository(self.db),
+                values=dict(values),
+                work_dir=self.work_dir,
+                session_id=session_id,
+            )
+        except Exception as exc:
+            return {
+                "status": "ERROR",
+                "created": False,
+                "sku": str(values.get("sku") or "").strip(),
+                "message": f"No pude crear el producto: {type(exc).__name__}: {exc}",
+            }
 
     def _record_verified_update(
         self,
