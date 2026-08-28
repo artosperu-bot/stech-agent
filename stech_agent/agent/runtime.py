@@ -6,7 +6,9 @@ from stech_agent.agent.resolver import ResolutionNeedsClarification, resolve_dec
 from stech_agent.agent.schema import PlannerDecision
 from stech_agent.db.connection import AgentDatabase
 from stech_agent.db.repositories import AuditRepository, CatalogRepository, SessionRepository
-from stech_agent.domain.models import ActionType
+from stech_agent.domain.fields import coerce_field
+from stech_agent.domain.models import ActionType, MutationMode
+from stech_agent.domain.scopes import build_scoped_patch, resolve_field_path, resolve_section
 from stech_agent.stech.product_writer import UnsupportedLiveField
 
 
@@ -363,6 +365,118 @@ class AgentBrainRuntime:
             "message": message,
             "seo": values,
             "seo_checks": checks,
+        }
+
+    def execute_guided_update(
+        self,
+        *,
+        session_id: int | None,
+        sku: str,
+        section: str,
+        values: dict[str, Any],
+    ) -> dict[str, Any]:
+        catalogs = CatalogRepository(self.db)
+        product = catalogs.get_by_sku(str(sku))
+        if product is None:
+            return {
+                "status": "BLOCKED",
+                "executed": False,
+                "message": f"No encontré el SKU {sku} en el catálogo actual.",
+                "resolved_skus": [],
+            }
+        if product.ambiguous:
+            return {
+                "status": "BLOCKED",
+                "executed": False,
+                "message": f"El SKU {sku} tiene filas duplicadas/conflictivas en el export. No hice cambios.",
+                "resolved_skus": [str(sku)],
+            }
+        if not values:
+            return {
+                "status": "BLOCKED",
+                "executed": False,
+                "message": "No seleccionaste ningún valor para cambiar.",
+                "resolved_skus": [str(sku)],
+            }
+
+        try:
+            section_key = resolve_section(section)
+            normalized: dict[str, Any] = {}
+            for raw_field, raw_value in values.items():
+                field = resolve_field_path(raw_field, section=section_key)
+                normalized[field] = coerce_field(field, raw_value)
+            patch = build_scoped_patch(
+                section=section_key,
+                requested_fields=tuple(normalized),
+                values=normalized,
+                mode=MutationMode.PATCH,
+            )
+        except (ValueError, KeyError) as exc:
+            return {
+                "status": "BLOCKED",
+                "executed": False,
+                "message": f"No puedo aplicar ese cambio de forma segura: {exc}",
+                "resolved_skus": [str(sku)],
+            }
+
+        try:
+            outcome = self._ensure_live_executor().execute_update(
+                sku=str(sku),
+                expected_name=product.name,
+                patch=patch,
+            )
+        except UnsupportedLiveField as exc:
+            return {
+                "status": "UNSUPPORTED_LIVE_FIELD",
+                "executed": False,
+                "message": str(exc),
+                "resolved_skus": [str(sku)],
+            }
+        except Exception as exc:
+            return {
+                "status": "ERROR",
+                "executed": False,
+                "message": f"No pude completar el cambio en S-TECH: {type(exc).__name__}: {exc}",
+                "resolved_skus": [str(sku)],
+            }
+
+        status = outcome.get("status")
+        if status == "VERIFIED":
+            changed_fields = outcome.get("changed_fields") or []
+            message = self._format_verified(
+                outcome.get("name") or product.name,
+                str(sku),
+                outcome.get("before") or {},
+                outcome.get("after") or {},
+                changed_fields,
+            )
+            audit_event_id = self._record_verified_update(
+                session_id=session_id,
+                command=f"modo guiado: {section_key}",
+                sku=str(sku),
+                name=product.name,
+                before=outcome.get("before") or {},
+                after=outcome.get("after") or {},
+                changed_fields=changed_fields,
+            )
+            executed = True
+        elif status == "NOOP":
+            message = f"{product.name} ({sku}) ya tenía esos valores. No fue necesario pulsar Aceptar."
+            audit_event_id = None
+            executed = False
+        else:
+            message = f"Intenté actualizar {product.name} ({sku}), pero la verificación no confirmó el resultado."
+            audit_event_id = None
+            executed = True
+
+        return {
+            "status": status,
+            "executed": executed,
+            "message": message,
+            "resolved_skus": [str(sku)],
+            "before": outcome.get("before") or {},
+            "after": outcome.get("after") or {},
+            "audit_event_id": audit_event_id,
         }
 
     def execute(self, command: str, *, session_id: int | None = None) -> dict[str, Any]:
