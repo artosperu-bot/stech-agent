@@ -6,7 +6,10 @@ from importlib.resources import files
 from stech_agent.db.connection import AgentDatabase
 
 
-MIGRATIONS = ((1, "001_initial.sql"),)
+MIGRATIONS = (
+    (1, "001_initial.sql"),
+    (2, "002_seo_batches.sql"),
+)
 
 
 def migrate(db: AgentDatabase) -> None:
