@@ -1,4 +1,4 @@
-from stech_agent.research.edge_chatgpt import EdgeChatGPTWorker
+from stech_agent.research.runtime_worker import RuntimeEdgeChatGPTWorker
 
 
 class FakeElement:
@@ -33,7 +33,7 @@ class FakeDriver:
 
 
 def test_fill_prompt_uses_dom_fallback_when_send_keys_is_dropped(tmp_path, monkeypatch):
-    worker = EdgeChatGPTWorker(raw_dir=tmp_path)
+    worker = RuntimeEdgeChatGPTWorker(raw_dir=tmp_path)
     worker.driver = FakeDriver()
     element = FakeElement()
 
