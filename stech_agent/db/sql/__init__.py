@@ -1,0 +1,1 @@
+"""Embedded database migrations."""
