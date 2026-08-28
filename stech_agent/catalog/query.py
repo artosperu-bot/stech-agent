@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
+import unicodedata
 from typing import Iterable
 
 from stech_agent.domain.models import ProductRecord, TargetSpec
@@ -12,17 +14,27 @@ class QueryResult:
     explanation: str
 
 
+def _norm_text(value: str) -> str:
+    text = unicodedata.normalize("NFKD", str(value))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.casefold().strip()
+    return re.sub(r"\s+", " ", text)
+
+
 def query_products(products: Iterable[ProductRecord], target: TargetSpec) -> QueryResult:
     items = list(products)
     explanations: list[str] = []
     explicit = tuple(str(x) for x in target.skus)
     explicit_set = set(explicit)
     working_set = set(str(x) for x in target.working_set_skus)
+    target_name = _norm_text(target.name) if target.name is not None else None
 
     def keep(p: ProductRecord) -> bool:
         if explicit and p.sku not in explicit_set:
             return False
         if working_set and p.sku not in working_set:
+            return False
+        if target_name is not None and _norm_text(p.name) != target_name:
             return False
         if target.brand is not None and p.brand.casefold() != target.brand.casefold():
             return False
@@ -48,6 +60,8 @@ def query_products(products: Iterable[ProductRecord], target: TargetSpec) -> Que
     else:
         skus = [p.sku for p in sorted(matched, key=lambda p: p.source_order)]
 
+    if target.name is not None:
+        explanations.append(f"name={target.name}")
     if target.brand is not None:
         explanations.append(f"brand={target.brand}")
     if target.category is not None:
