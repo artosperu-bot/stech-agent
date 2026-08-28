@@ -44,6 +44,20 @@ def test_reader_visits_only_requested_sections_and_reads_seo():
     assert state.sections==("seo",)
 
 
+def test_reader_ignores_fully_blank_faq_rows_but_keeps_partial_for_qa():
+    page=FakePage()
+    page.questions=FakeLocator(items=[FakeLocator(value="Q1"),FakeLocator(value=""),FakeLocator(value="Q partial")])
+    page.answers=FakeLocator(items=[FakeLocator(value="A1"),FakeLocator(value=""),FakeLocator(value="")])
+    reader=ProductReader(page,editor_opener=lambda sku,expected_name=None:None)
+
+    state=reader.read_product("PROD-TEST",sections=("seo",))
+
+    assert state.values["seo_faqs"]==[
+        {"question":"Q1","answer":"A1"},
+        {"question":"Q partial","answer":""},
+    ]
+
+
 def test_reader_rejects_unknown_section_before_editing():
     called=[]; reader=ProductReader(FakePage(),editor_opener=lambda sku,expected_name=None:called.append(sku))
     try: reader.read_product("PROD-TEST",sections=("unknown",))
