@@ -7,6 +7,7 @@ from stech_agent.db.connection import AgentDatabase
 from stech_agent.db.migrations import migrate
 from stech_agent.db.repositories import CatalogRepository
 from stech_agent.domain.models import ProductRecord
+from stech_agent.seo.audit import SeoAuditRepository
 from stech_agent.seo.batches import SeoBatchRepository
 from stech_agent.seo.publisher import SeoPublisher
 
@@ -89,6 +90,10 @@ def test_publisher_re_reads_and_preserves_manual_title_added_after_staging(tmp_p
     assert "seo_title" not in live.updates[0]
     assert live.updates[0]["seo_description"] == _generated()["descripcion_seo"]
     assert live.current["seo_title"] == "Título agregado manualmente"
+    cached = SeoAuditRepository(db).get("A")
+    assert cached is not None
+    assert cached["status"] == "SEO_COMPLETE"
+    assert cached["values"] == live.current
 
 
 def test_publisher_noops_if_product_became_complete_before_publish(tmp_path):
@@ -103,6 +108,9 @@ def test_publisher_noops_if_product_became_complete_before_publish(tmp_path):
     assert result.status == "NOOP"
     assert live.updates == []
     assert SeoBatchRepository(db).get_item(item.id).state == "SEO_COMPLETE"
+    cached = SeoAuditRepository(db).get("A")
+    assert cached is not None
+    assert cached["status"] == "SEO_COMPLETE"
 
 
 def test_publisher_marks_verify_error_when_live_writer_does_not_verify(tmp_path):
