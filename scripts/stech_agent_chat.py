@@ -214,10 +214,16 @@ def _resolve_scope_interactive(
     return scope
 
 
+def _completed_during_seo_audit(item: dict) -> bool:
+    preparation = item.get("preparation") or {}
+    return preparation.get("action") == "COMPLETED"
+
+
 def _print_bulk_failures(result: dict) -> None:
     failures = [
         item for item in result.get("items", [])
-        if item.get("status") not in {"VERIFIED", "NOOP", "SEO_COMPLETE", "SEO_INCOMPLETE"}
+        if not _completed_during_seo_audit(item)
+        and item.get("status") not in {"VERIFIED", "NOOP", "SEO_COMPLETE", "SEO_INCOMPLETE"}
     ]
     if failures:
         print("\nINCIDENCIAS")
@@ -228,7 +234,10 @@ def _print_bulk_failures(result: dict) -> None:
 
 
 def _print_seo_incomplete(result: dict) -> None:
-    incomplete = [item for item in result.get("items", []) if item.get("status") == "SEO_INCOMPLETE"]
+    incomplete = [
+        item for item in result.get("items", [])
+        if item.get("status") == "SEO_INCOMPLETE" and not _completed_during_seo_audit(item)
+    ]
     if incomplete:
         print("\nSEO INCOMPLETO")
         for item in incomplete[:20]:
@@ -262,7 +271,7 @@ def _guided_flow(
     print()
     print(section_menu_text(section))
     if section == "seo":
-        print("V. Verificar si todo el SEO está completo")
+        print("V. Verificar/completar SEO faltante producto por producto")
 
     choice = input("\nElige uno o varios campos (ej. 1,2) o V para verificar SEO: ").strip()
     if not choice or choice == "0":
@@ -273,8 +282,12 @@ def _guided_flow(
         if dry_run:
             print("\nAgente> Estás en dry-run; no abrí S-TECH. Inicia sin --dry-run para verificar el SEO real.")
             return
-        print(f"\nVERIFICAR SEO\nAlcance: {scope.label}\nProductos a revisar: {len(scope.skus)}")
-        print("Los productos con SEO vacío/parcial se enviarán a Research/QA en segundo plano mientras la auditoría continúa.")
+        print(f"\nVERIFICAR / COMPLETAR SEO\nAlcance: {scope.label}\nProductos a revisar: {len(scope.skus)}")
+        print(
+            "Se revisarán uno por uno. Si un producto ya tiene SEO completo, se deja tal cual. "
+            "Si está vacío o parcial, Edge/ChatGPT aplicará el prompt SEO V7.2, S-TECH completará "
+            "solo lo faltante, lo guardará con Aceptar, lo verificará y recién seguirá al siguiente."
+        )
         confirmation = input("Escribe VERIFICAR para continuar o CANCELAR: ").strip().casefold()
         if confirmation != "verificar":
             print("Agente> Cancelado. No abrí S-TECH.")
@@ -286,7 +299,7 @@ def _guided_flow(
         )
         print(f"\nAgente> {result['message']}")
         if result.get("preparation_batch_id"):
-            print(f"[SEO] Lote de preparación: {result['preparation_batch_id']}")
+            print(f"[SEO] Lote: {result['preparation_batch_id']}")
         _print_seo_incomplete(result)
         _print_bulk_failures(result)
         return
@@ -431,7 +444,10 @@ def main() -> int:
     print("Usa 'salir' para terminar.")
     if not args.dry_run:
         print("El navegador se abrirá automáticamente solo cuando una orden requiera leer o cambiar datos reales en S-TECH.")
-        print("En auditorías SEO, Edge/ChatGPT se abrirá recién al encontrar el primer SEO vacío/parcial y preparará Research/QA en segundo plano.")
+        print(
+            "En auditorías SEO, si un producto está vacío/parcial, Edge/ChatGPT usará el prompt V7.2, "
+            "S-TECH completará solo lo faltante, lo verificará y recién seguirá al siguiente."
+        )
 
     try:
         while True:
@@ -475,7 +491,7 @@ def main() -> int:
                     message = result.get("message") or "Orden procesada."
                 print(f"\nAgente> {message}")
                 if result.get("preparation_batch_id"):
-                    print(f"[SEO] Lote de preparación: {result['preparation_batch_id']}")
+                    print(f"[SEO] Lote: {result['preparation_batch_id']}")
 
                 decision_data = result.get("decision") or {}
                 if result.get("resolved_skus") and not decision_data.get("clarification_required"):
