@@ -86,6 +86,43 @@ class SeoBatchRepository:
                 )
             return batch_id
 
+    def append_sku(self, batch_id: int, sku: str) -> SeoBatchItem:
+        clean_sku = str(sku).strip()
+        if not clean_sku:
+            raise ValueError("SKU vacío")
+        with self.db.transaction(immediate=True) as con:
+            batch = con.execute("SELECT id FROM seo_batches WHERE id=?", (int(batch_id),)).fetchone()
+            if batch is None:
+                raise KeyError(f"Lote SEO inexistente: {batch_id}")
+            existing = con.execute(
+                "SELECT * FROM seo_batch_items WHERE batch_id=? AND sku=?",
+                (int(batch_id), clean_sku),
+            ).fetchone()
+            if existing is not None:
+                return self._item(existing)
+            position = int(con.execute(
+                "SELECT COALESCE(MAX(position), -1) + 1 FROM seo_batch_items WHERE batch_id=?",
+                (int(batch_id),),
+            ).fetchone()[0])
+            con.execute(
+                "INSERT INTO seo_batch_items(batch_id,position,sku,state) VALUES (?,?,?,'RESEARCH_PENDING')",
+                (int(batch_id), position, clean_sku),
+            )
+            con.execute(
+                """
+                UPDATE seo_batches
+                SET total_items=total_items+1, status='RUNNING', completed_at=NULL,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                (int(batch_id),),
+            )
+            row = con.execute(
+                "SELECT * FROM seo_batch_items WHERE batch_id=? AND sku=?",
+                (int(batch_id), clean_sku),
+            ).fetchone()
+            return self._item(row)
+
     def get(self, batch_id: int) -> dict | None:
         with self.db.connect() as con:
             row = con.execute("SELECT * FROM seo_batches WHERE id=?", (int(batch_id),)).fetchone()
