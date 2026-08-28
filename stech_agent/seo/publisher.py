@@ -8,6 +8,7 @@ from typing import Any
 from stech_agent.db.connection import AgentDatabase
 from stech_agent.db.repositories import CatalogRepository
 from stech_agent.domain.models import FieldPatch, MutationMode
+from stech_agent.seo.audit import SeoAuditRepository
 from stech_agent.seo.batches import SeoBatchRepository
 from stech_agent.seo.qa import validate_proposal
 from stech_agent.stech.verifier import compare_expected_fields
@@ -44,6 +45,7 @@ class SeoPublisher:
         self.live = live_executor
         self.batches = SeoBatchRepository(db)
         self.catalogs = CatalogRepository(db)
+        self.audits = SeoAuditRepository(db)
 
     def _proposal(self, item_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
         with self.db.connect() as con:
@@ -120,6 +122,7 @@ class SeoPublisher:
                 return PublishResult(item.id, item.sku, "QA_REVIEW", message, {})
             if qa.status == "NOOP" or not qa.patch:
                 self.batches.set_state(item.id, "SEO_COMPLETE")
+                self.audits.record(item.sku, "SEO_COMPLETE", before, source="stech_live_after_publish")
                 self._record_attempt(item.id, before=before, patch={}, after=before, status="NOOP")
                 return PublishResult(item.id, item.sku, "NOOP", "El SEO ya estaba completo; no pulsé Aceptar.", {})
 
@@ -164,6 +167,7 @@ class SeoPublisher:
                 return PublishResult(item.id, item.sku, "VERIFY_ERROR", error, patch)
 
             self.batches.set_state(item.id, "VERIFIED")
+            self.audits.record(item.sku, "SEO_COMPLETE", after, source="stech_live_after_publish")
             self._record_attempt(item.id, before=before, patch=patch, after=after, status="VERIFIED")
             return PublishResult(
                 item.id,
