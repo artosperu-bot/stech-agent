@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from stech_agent.agent.guided_menu import resolve_guided_scope, scope_menu_text
+from stech_agent.agent.guided_menu import (
+    bulk_confirmation_text,
+    resolve_guided_scope,
+    scope_kind_from_choice,
+    scope_menu_text,
+)
 from stech_agent.domain.models import ProductRecord
 
 
@@ -21,6 +26,16 @@ def test_scope_menu_exposes_single_all_brand_category_subcategory_and_working_se
     assert "Por Categoría" in text
     assert "Por Subcategoría" in text
     assert 'Conjunto actual ("de esos")' in text
+
+
+def test_scope_numeric_choice_maps_to_expected_scope_kind():
+    assert scope_kind_from_choice("1") == "single"
+    assert scope_kind_from_choice("2") == "all"
+    assert scope_kind_from_choice("3") == "brand"
+    assert scope_kind_from_choice("4") == "category"
+    assert scope_kind_from_choice("5") == "subcategory"
+    assert scope_kind_from_choice("6") == "working_set"
+    assert scope_kind_from_choice("0") is None
 
 
 def test_scope_by_brand_is_case_and_accent_insensitive_and_separates_ambiguous():
@@ -66,3 +81,16 @@ def test_scope_requires_value_for_brand_category_and_subcategory():
             assert "indicar" in str(exc).lower()
         else:
             raise AssertionError(f"{kind} debió exigir un valor")
+
+
+def test_bulk_confirmation_is_human_readable_and_requires_accept():
+    scope = resolve_guided_scope(_products(), "brand", value="JBL")
+    text = bulk_confirmation_text(scope, {"stock": 8, "price": "9.90"})
+    assert "Marca: JBL" in text
+    assert "Productos encontrados: 3" in text
+    assert "Productos aplicables: 2" in text
+    assert "Bloqueados por ambigüedad: 1" in text
+    assert "stock = 8" in text
+    assert "price = 9.90" in text
+    assert "ACEPTAR" in text
+    assert "CANCELAR" in text
