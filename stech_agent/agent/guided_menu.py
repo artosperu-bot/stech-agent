@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 import unicodedata
+from typing import Iterable, Any
+
+from stech_agent.domain.models import ProductRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,3 +109,39 @@ def normalize_local_command(command: str) -> str | None:
     if text == "0":
         return "exit"
     return None
+
+
+def resolve_product_reference(products: Iterable[ProductRecord], reference: str) -> ProductRecord:
+    reference_text = str(reference).strip()
+    if not reference_text:
+        raise ValueError("Debes indicar un SKU o nombre de producto")
+    items = list(products)
+
+    for product in items:
+        if product.sku.casefold() == reference_text.casefold():
+            return product
+
+    wanted = _norm(reference_text)
+    matches = [product for product in items if _norm(product.name) == wanted]
+    if not matches:
+        raise ValueError(f"No encontré un producto con SKU o nombre exacto {reference_text!r}")
+    if len(matches) > 1:
+        skus = ", ".join(product.sku for product in matches[:10])
+        raise ValueError(f"Encontré más de un producto con ese nombre ({skus}). Usa el SKU exacto.")
+    return matches[0]
+
+
+def confirmation_text(product: ProductRecord, values: dict[str, Any]) -> str:
+    lines = [
+        "\nCONFIRMAR CAMBIO",
+        f"Producto: {product.name or product.sku} ({product.sku})",
+        "Cambios solicitados:",
+    ]
+    for field, value in values.items():
+        lines.append(f"  - {field} = {value}")
+    lines.extend([
+        "",
+        "Escribe ACEPTAR para guardar en S-TECH.",
+        "Escribe CANCELAR para no hacer ningún cambio.",
+    ])
+    return "\n".join(lines)
