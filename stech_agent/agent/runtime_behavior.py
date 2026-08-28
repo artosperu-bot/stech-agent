@@ -203,7 +203,7 @@ def _verify_seo_skus(
     overall = "PARTIAL" if errors or preparation_errors else "SEO_AUDIT"
     message = (
         f"{scope_label}: {len(complete_skus)} completo(s), "
-        f"{len(incomplete_skus)} incompleto(s) / parcial(es), "
+        f"{len(incomplete_skus)} incompleto(s) / {len(incomplete_skus)} parcial(es), "
         f"{len(empty_skus)} sin SEO, {errors} error(es)."
     )
     if completed_skus:
