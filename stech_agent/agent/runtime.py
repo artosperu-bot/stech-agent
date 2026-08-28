@@ -331,6 +331,45 @@ class AgentBrainRuntime:
             "items": items,
         }
 
+    def verify_seo_sku(self, sku: str) -> dict[str, Any]:
+        product = CatalogRepository(self.db).get_by_sku(str(sku))
+        if product is None:
+            return {
+                "status": "BLOCKED",
+                "executed": False,
+                "message": f"No encontré el SKU {sku} en el catálogo actual.",
+                "resolved_skus": [],
+            }
+        if product.ambiguous:
+            return {
+                "status": "BLOCKED",
+                "executed": False,
+                "message": f"El SKU {sku} tiene filas duplicadas/conflictivas en el export. No abrí S-TECH.",
+                "resolved_skus": [str(sku)],
+            }
+        try:
+            values = self._ensure_live_executor().read_fields(
+                sku=str(sku),
+                fields=("seo_title", "seo_description", "seo_keywords", "seo_faq"),
+                expected_name=product.name,
+            )
+        except Exception as exc:
+            return {
+                "status": "ERROR",
+                "executed": False,
+                "message": f"No pude verificar el SEO en S-TECH: {type(exc).__name__}: {exc}",
+                "resolved_skus": [str(sku)],
+            }
+        status, message, checks = self._seo_summary(product.name, str(sku), values)
+        return {
+            "status": status,
+            "executed": False,
+            "message": message,
+            "resolved_skus": [str(sku)],
+            "seo": values,
+            "seo_checks": checks,
+        }
+
     def _execute_seo_read(self, planned: dict[str, Any], decision: PlannerDecision) -> dict[str, Any]:
         if planned.get("count") != 1:
             return {
