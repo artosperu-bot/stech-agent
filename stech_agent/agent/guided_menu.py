@@ -5,6 +5,7 @@ import re
 import unicodedata
 from typing import Iterable, Any
 
+from stech_agent.agent.product_creation import ProductCreateDraft
 from stech_agent.domain.models import ProductRecord
 
 
@@ -119,6 +120,7 @@ def main_menu_text() -> str:
         "5. Multimedia (consulta; subida de imágenes después)\n"
         "6. Historial de cambios de esta sesión\n"
         "7. Deshacer cambios de esta sesión\n"
+        "8. Agregar nuevo producto\n"
         "0. Salir\n"
     )
 
@@ -139,6 +141,11 @@ def normalize_local_command(command: str) -> str | None:
         return "history"
     if text in {"7", "deshacer", "deshacer cambios", "deshacer cambios de esta sesion", "revertir cambios de esta sesion"}:
         return "rollback"
+    if text in {
+        "8", "agregar nuevo producto", "agrega nuevo producto", "agregar producto",
+        "crear producto", "crea producto", "nuevo producto",
+    }:
+        return "create_product"
     if text == "0":
         return "exit"
     return None
@@ -224,6 +231,58 @@ def resolve_guided_scope(
         raise ValueError(f"No encontré productos con {label_name.lower()} {value!r}")
     canonical = str(getattr(matches[0], field, "") or value).strip()
     return _split_scope(matches, f"{label_name}: {canonical}")
+
+
+def product_create_reference_values(products: Iterable[ProductRecord]) -> dict[str, Any]:
+    items = list(products)
+    brands = tuple(dict.fromkeys(product.brand for product in items if product.brand))
+    categories = tuple(dict.fromkeys(product.category for product in items if product.category))
+    subcategories_by_category: dict[str, tuple[str, ...]] = {}
+    for category in categories:
+        subcategories_by_category[category] = tuple(dict.fromkeys(
+            product.subcategory
+            for product in items
+            if product.subcategory and _norm(product.category) == _norm(category)
+        ))
+    statuses = tuple(dict.fromkeys(product.status for product in items if product.status))
+    return {
+        "brands": brands,
+        "categories": categories,
+        "subcategories_by_category": subcategories_by_category,
+        "statuses": statuses,
+    }
+
+
+def create_confirmation_text(draft: ProductCreateDraft) -> str:
+    values = draft.values
+    lines = [
+        "\nCREAR NUEVO PRODUCTO",
+        f"SKU: {draft.sku}",
+        f"Nombre: {values.get('name', '')}",
+        f"Marca: {values.get('brand', '')}",
+        f"Categoría: {values.get('category', '')}",
+        f"Subcategoría: {values.get('subcategory', '')}",
+        f"Precio: {values.get('price')}",
+        f"Stock: {values.get('stock')}",
+        f"Visible inicialmente: {'Sí' if values.get('visible') else 'No'}",
+        f"En oferta: {'Sí' if values.get('on_offer') else 'No'}",
+        f"Destacado: {'Sí' if values.get('featured') else 'No'}",
+        f"Recomendado: {'Sí' if values.get('recommended') else 'No'}",
+    ]
+    if values.get("description"):
+        lines.append(f"Descripción: {values.get('description')}")
+    if values.get("main_specs"):
+        lines.append(f"Especificaciones principales: {values.get('main_specs')}")
+    if values.get("technical_specs"):
+        lines.append(f"Especificaciones técnicas: {values.get('technical_specs')}")
+    lines.extend([
+        "",
+        "El SKU fue validado como nuevo contra el catálogo actual.",
+        "El agente volverá a exportar S-TECH antes de importar para comprobar que siga libre.",
+        "Escribe CREAR para importar, reexportar y verificar el alta.",
+        "Escribe CANCELAR para no hacer ningún cambio.",
+    ])
+    return "\n".join(lines)
 
 
 def confirmation_text(product: ProductRecord, values: dict[str, Any]) -> str:
