@@ -142,8 +142,17 @@ def normalize_local_command(command: str) -> str | None:
     if text in {"7", "deshacer", "deshacer cambios", "deshacer cambios de esta sesion", "revertir cambios de esta sesion"}:
         return "rollback"
     if text in {
-        "8", "agregar nuevo producto", "agrega nuevo producto", "agregar producto",
-        "crear producto", "crea producto", "nuevo producto",
+        "8",
+        "agregar nuevo producto",
+        "agrega nuevo producto",
+        "agregar un nuevo producto",
+        "agrega un nuevo producto",
+        "agregar producto",
+        "crear producto",
+        "crea producto",
+        "crear un nuevo producto",
+        "crea un nuevo producto",
+        "nuevo producto",
     }:
         return "create_product"
     if text == "0":
