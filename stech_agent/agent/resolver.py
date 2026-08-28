@@ -106,6 +106,22 @@ def resolve_decision(
                 candidate_skus=result.skus,
             )
 
+    if decision.action in _MUTATING_ACTIONS and not result.skus:
+        raise ResolutionNeedsClarification(
+            "El objetivo indicado no coincide con ningún producto del catálogo actual. No se ejecutará ningún cambio."
+        )
+
+    if decision.action in _MUTATING_ACTIONS and result.skus:
+        by_sku = {product.sku: product for product in product_list}
+        ambiguous = tuple(
+            sku for sku in result.skus if sku in by_sku and by_sku[sku].ambiguous
+        )
+        if ambiguous:
+            raise ResolutionNeedsClarification(
+                "Hay productos seleccionados con filas duplicadas o datos conflictivos en el export. Deben resolverse antes de modificar S-TECH.",
+                candidate_skus=ambiguous,
+            )
+
     patch: FieldPatch | None = None
     if decision.section is not None:
         section = resolve_section(decision.section)
