@@ -22,6 +22,10 @@ def _text(value: Any) -> str:
     return str(value).strip()
 
 
+def _identity(value: Any) -> Any:
+    return value
+
+
 def _sku(value: Any) -> str:
     if value is None:
         return ""
@@ -99,6 +103,12 @@ FIELD_REGISTRY: dict[str, FieldDefinition] = {
     "gallery": FieldDefinition("gallery", ("Galería", "Galeria"), True, "R2", _text),
     "discount_rule": FieldDefinition("discount_rule", ("Regla de descuento",), True, "R3", _text),
     "promotions": FieldDefinition("promotions", ("Promociones",), True, "R3", _text),
+    # Live-only SEO fields. They are intentionally not bound to Excel headers;
+    # they are read/written from the S-TECH SEO tab and persisted separately.
+    "seo_title": FieldDefinition("seo_title", (), True, "R1", _text),
+    "seo_description": FieldDefinition("seo_description", (), True, "R1", _text),
+    "seo_keywords": FieldDefinition("seo_keywords", (), True, "R1", _text),
+    "seo_faq": FieldDefinition("seo_faq", (), True, "R1", _identity),
 }
 
 _HEADER_TO_KEY: dict[str, str] = {}
