@@ -51,18 +51,20 @@ def _read_seo_faqs(page: Any) -> list[dict[str, str]]:
     questions = locate(page, "seo_question")
     answers = locate(page, "seo_answer")
     count = min(questions.count(), answers.count())
-    return [
-        {
-            "question": _safe_input_value(questions.nth(index)),
-            "answer": _safe_input_value(answers.nth(index)),
-        }
-        for index in range(count)
-    ]
+    out: list[dict[str, str]] = []
+    for index in range(count):
+        question = _safe_input_value(questions.nth(index))
+        answer = _safe_input_value(answers.nth(index))
+        # S-TECH can keep blank visual slots after a rollback. They are not FAQ
+        # content and must not make a semantically empty SEO look populated.
+        if question or answer:
+            out.append({"question": question, "answer": answer})
+    return out
 
 
 def _set_seo_faqs(page: Any, value: Any) -> None:
-    if not isinstance(value, (list, tuple)) or len(value) != 3:
-        raise UnsupportedLiveField("seo_faq requiere exactamente 3 pares pregunta/respuesta")
+    if not isinstance(value, (list, tuple)) or len(value) > 3:
+        raise UnsupportedLiveField("seo_faq requiere entre 0 y 3 pares pregunta/respuesta")
     desired: list[dict[str, str]] = []
     for index, faq in enumerate(value, start=1):
         if not isinstance(faq, dict):
@@ -76,19 +78,33 @@ def _set_seo_faqs(page: Any, value: Any) -> None:
     _activate_field_tab(page, "seo_faq")
     questions = locate(page, "seo_question")
     answers = locate(page, "seo_answer")
-    while min(questions.count(), answers.count()) < 3:
+
+    # For normal SEO completion there are exactly 3 desired FAQ, so create
+    # missing slots. During rollback the desired prior state may contain 0-2;
+    # in that case reuse existing slots and clear extras instead of inventing
+    # an uncertified delete-button interaction.
+    required_slots = len(desired)
+    while min(questions.count(), answers.count()) < required_slots:
         locate(page, "seo_add_faq").click()
         try: page.wait_for_timeout(120)
         except Exception: pass
         questions = locate(page, "seo_question")
         answers = locate(page, "seo_answer")
 
-    if min(questions.count(), answers.count()) < 3:
-        raise UnsupportedLiveField("S-TECH no mostró las 3 posiciones FAQ esperadas")
+    available = min(questions.count(), answers.count())
+    if available < required_slots:
+        raise UnsupportedLiveField("S-TECH no mostró las posiciones FAQ esperadas")
 
-    for index, faq in enumerate(desired):
-        questions.nth(index).fill(faq["question"])
-        answers.nth(index).fill(faq["answer"])
+    slots_to_touch = min(max(available, required_slots), 3)
+    for index in range(slots_to_touch):
+        if index < len(desired):
+            question = desired[index]["question"]
+            answer = desired[index]["answer"]
+        else:
+            question = ""
+            answer = ""
+        questions.nth(index).fill(question)
+        answers.nth(index).fill(answer)
 
 
 def _default_set_field(page: Any, field: str, value: Any) -> None:
