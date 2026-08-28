@@ -16,6 +16,14 @@ class GuidedField:
     note: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class GuidedScope:
+    label: str
+    skus: tuple[str, ...]
+    blocked_skus: tuple[str, ...]
+    total_matches: int
+
+
 _SECTION_FIELDS: dict[str, tuple[GuidedField, ...]] = {
     "basic": (
         GuidedField("name", "Nombre del producto", True),
@@ -76,6 +84,19 @@ def section_menu_text(section: str) -> str:
     return "\n".join(lines)
 
 
+def scope_menu_text() -> str:
+    return (
+        "\n¿A QUÉ PRODUCTOS QUIERES APLICARLO?\n"
+        "1. Un producto\n"
+        "2. Todos los productos\n"
+        "3. Por Marca\n"
+        "4. Por Categoría\n"
+        "5. Por Subcategoría\n"
+        "6. Conjunto actual (\"de esos\")\n"
+        "0. Volver\n"
+    )
+
+
 def main_menu_text() -> str:
     return (
         "\nOPCIONES RÁPIDAS\n"
@@ -129,6 +150,68 @@ def resolve_product_reference(products: Iterable[ProductRecord], reference: str)
         skus = ", ".join(product.sku for product in matches[:10])
         raise ValueError(f"Encontré más de un producto con ese nombre ({skus}). Usa el SKU exacto.")
     return matches[0]
+
+
+def _split_scope(matches: list[ProductRecord], label: str) -> GuidedScope:
+    if not matches:
+        raise ValueError(f"No encontré productos para {label}")
+    allowed = tuple(product.sku for product in matches if not product.ambiguous)
+    blocked = tuple(product.sku for product in matches if product.ambiguous)
+    return GuidedScope(
+        label=label,
+        skus=allowed,
+        blocked_skus=blocked,
+        total_matches=len(matches),
+    )
+
+
+def resolve_guided_scope(
+    products: Iterable[ProductRecord],
+    kind: str,
+    *,
+    value: str | None = None,
+    working_set_skus: Iterable[str] = (),
+) -> GuidedScope:
+    items = list(products)
+    scope = _norm(kind)
+
+    if scope in {"single", "uno", "un producto", "producto"}:
+        if not str(value or "").strip():
+            raise ValueError("Debes indicar un SKU o nombre de producto")
+        product = resolve_product_reference(items, str(value))
+        return _split_scope([product], f"Producto: {product.name or product.sku}")
+
+    if scope in {"all", "todos", "todos los productos"}:
+        return _split_scope(items, "Todos los productos")
+
+    if scope in {"working set", "working_set", "conjunto actual", "de esos"}:
+        wanted = {str(sku).strip() for sku in working_set_skus if str(sku).strip()}
+        if not wanted:
+            raise ValueError("No hay un conjunto actual. Primero selecciona o busca productos en el chat.")
+        matches = [product for product in items if product.sku in wanted]
+        return _split_scope(matches, 'Conjunto actual ("de esos")')
+
+    field_by_scope = {
+        "brand": ("brand", "Marca"),
+        "marca": ("brand", "Marca"),
+        "category": ("category", "Categoría"),
+        "categoria": ("category", "Categoría"),
+        "subcategory": ("subcategory", "Subcategoría"),
+        "subcategoria": ("subcategory", "Subcategoría"),
+    }
+    resolved = field_by_scope.get(scope)
+    if resolved is None:
+        raise ValueError(f"Alcance desconocido: {kind}")
+    field, label_name = resolved
+    if not str(value or "").strip():
+        raise ValueError(f"Debes indicar {label_name.lower()} para usar ese alcance")
+
+    wanted = _norm(str(value))
+    matches = [product for product in items if _norm(getattr(product, field, "")) == wanted]
+    if not matches:
+        raise ValueError(f"No encontré productos con {label_name.lower()} {value!r}")
+    canonical = str(getattr(matches[0], field, "") or value).strip()
+    return _split_scope(matches, f"{label_name}: {canonical}")
 
 
 def confirmation_text(product: ProductRecord, values: dict[str, Any]) -> str:
