@@ -18,11 +18,21 @@ _ACTIVE_STATES = {
     "RESEARCHED",
     "QA_PENDING",
     "QA_RUNNING",
+    "PUBLISHING",
+    "READY_REVERIFY",
 }
 
 
 class SeoProgressivePreparer:
-    """Feed missing SEO to a background Research/QA worker while audit keeps moving."""
+    """Handle SEO findings as soon as each SKU is audited.
+
+    When ``publisher`` is provided, EMPTY/INCOMPLETE products are completed
+    synchronously: Edge research -> QA -> S-TECH publish/verify, and only then
+    does ``accept_audit`` return so the caller can continue with the next SKU.
+
+    Without a publisher the legacy preparation-only mode remains available and
+    runs Research/QA in a background worker, leaving items READY.
+    """
 
     def __init__(
         self,
@@ -30,10 +40,12 @@ class SeoProgressivePreparer:
         *,
         research_worker_factory: Callable[[], Any],
         work_dir: str | Path,
+        publisher: Any | None = None,
         log=None,
     ):
         self.db = db
         self.research_worker_factory = research_worker_factory
+        self.publisher = publisher
         self.work_dir = Path(work_dir)
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self.log = log or (lambda _msg: None)
@@ -52,6 +64,24 @@ class SeoProgressivePreparer:
     def batch_id(self) -> int | None:
         return self._batch_id
 
+    @property
+    def immediate_publish(self) -> bool:
+        return self.publisher is not None
+
+    def _ensure_orchestrator(self) -> SeoBatchOrchestrator:
+        if self._closed:
+            raise RuntimeError("El preparador SEO ya está cerrado")
+        if self._orchestrator is None:
+            self._research = self.research_worker_factory()
+            self._orchestrator = SeoBatchOrchestrator(
+                self.db,
+                self._research,
+                publisher=self.publisher,
+                work_dir=self.work_dir,
+                log=self.log,
+            )
+        return self._orchestrator
+
     def _ensure_worker(self) -> None:
         if self._closed:
             raise RuntimeError("El preparador SEO ya está cerrado")
@@ -67,19 +97,13 @@ class SeoProgressivePreparer:
 
     def _worker_loop(self) -> None:
         try:
-            self._research = self.research_worker_factory()
-            self._orchestrator = SeoBatchOrchestrator(
-                self.db,
-                self._research,
-                work_dir=self.work_dir,
-                log=self.log,
-            )
+            orchestrator = self._ensure_orchestrator()
             while True:
                 batch_id = self._queue.get()
                 try:
                     if batch_id is None:
                         return
-                    self._orchestrator.run(int(batch_id))
+                    orchestrator.run(int(batch_id))
                 except Exception as exc:
                     self.log(f"[SEO] Error del worker Research/QA: {type(exc).__name__}: {exc}")
                 finally:
@@ -105,7 +129,7 @@ class SeoProgressivePreparer:
                 session_id=session_id,
                 skus=[sku],
                 scope=dict(scope or {}),
-                publish=False,
+                publish=self.immediate_publish,
             )
             self._sealed = False
         else:
@@ -125,6 +149,7 @@ class SeoProgressivePreparer:
         self.audits.record(sku, status, dict(values or {}))
 
         if status == "SEO_COMPLETE":
+            self.log(f"[SEO] {sku}: SEO completo; sigo con el siguiente producto.")
             return {
                 "action": "SKIP_COMPLETE",
                 "sku": sku,
@@ -140,6 +165,27 @@ class SeoProgressivePreparer:
             }
 
         batch_id = self._open_batch(sku=sku, session_id=session_id, scope=scope)
+
+        if self.immediate_publish:
+            self.log(
+                f"[SEO] {sku}: {status} → investigando ahora con Edge/ChatGPT antes de continuar."
+            )
+            orchestrator = self._ensure_orchestrator()
+            orchestrator.run(batch_id)
+            item = next(item for item in self.batches.list_items(batch_id) if item.sku == sku)
+            if item.state in {"VERIFIED", "SEO_COMPLETE"}:
+                action = "COMPLETED"
+                self.log(f"[SEO] {sku}: {item.state}; ahora continúo con el siguiente producto.")
+            else:
+                action = "REVIEW"
+                self.log(f"[SEO] {sku}: quedó en {item.state}; no inventé ni forcé el guardado.")
+            return {
+                "action": action,
+                "sku": sku,
+                "state": item.state,
+                "batch_id": batch_id,
+            }
+
         self._ensure_worker()
         self._queue.put(batch_id)
         self.log(f"[SEO] {sku}: {status} → enviado a Research/QA; la auditoría continúa.")
@@ -151,6 +197,8 @@ class SeoProgressivePreparer:
         }
 
     def wait_until_idle(self, timeout: float = 30.0) -> bool:
+        if self.immediate_publish:
+            return True
         deadline = time.monotonic() + max(0.0, float(timeout))
         while time.monotonic() <= deadline:
             batch_id = self._batch_id
@@ -180,3 +228,10 @@ class SeoProgressivePreparer:
             self._queue.put(None)
             worker.join(timeout=5.0)
         self._worker = None
+        if self._research is not None and hasattr(self._research, "close"):
+            try:
+                self._research.close()
+            except Exception:
+                pass
+        self._research = None
+        self._orchestrator = None
