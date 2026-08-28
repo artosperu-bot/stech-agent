@@ -33,6 +33,15 @@ class RiskLevel(str, Enum):
     R3 = "R3"
 
 
+class MutationMode(str, Enum):
+    """How an instruction is allowed to affect product fields."""
+
+    READ = "READ"
+    FILL_MISSING = "FILL_MISSING"
+    PATCH = "PATCH"
+    REPLACE_SECTION = "REPLACE_SECTION"
+
+
 @dataclass(frozen=True, slots=True)
 class ProductRecord:
     sku: str
@@ -87,11 +96,30 @@ class TargetSpec:
 
 @dataclass(frozen=True, slots=True)
 class FieldPatch:
+    """A patch that carries its own hard authorization mask.
+
+    ``authorized_fields`` is enforced in the domain object itself so an LLM,
+    router or caller cannot accidentally smuggle an extra field into the
+    executor. Existing callers that do not pass the mask remain compatible:
+    their explicit value keys become the authorization mask.
+    """
+
     values: dict[str, Any]
+    mode: MutationMode = MutationMode.PATCH
+    section: str | None = None
+    authorized_fields: frozenset[str] | None = None
     fields: frozenset[str] = field(init=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "fields", frozenset(self.values.keys()))
+        fields = frozenset(self.values.keys())
+        authorized = fields if self.authorized_fields is None else frozenset(self.authorized_fields)
+        unauthorized = fields - authorized
+        if unauthorized:
+            raise ValueError("Campos no autorizados: " + ", ".join(sorted(unauthorized)))
+        if self.mode is MutationMode.READ and fields:
+            raise ValueError("READ no puede contener valores para modificar")
+        object.__setattr__(self, "fields", fields)
+        object.__setattr__(self, "authorized_fields", authorized)
 
 
 @dataclass(frozen=True, slots=True)
