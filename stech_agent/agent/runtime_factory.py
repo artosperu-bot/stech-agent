@@ -3,11 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from stech_agent.agent.live_executor import StechLiveExecutor
 from stech_agent.agent.runtime import AgentBrainRuntime
 from stech_agent.config import AgentPaths
 from stech_agent.db.connection import AgentDatabase
 from stech_agent.research.edge_chatgpt import EdgeChatGPTWorker
 from stech_agent.seo.progressive import SeoProgressivePreparer
+from stech_agent.seo.publisher import SeoPublisher
 
 
 def build_live_runtime(
@@ -16,12 +18,15 @@ def build_live_runtime(
     *,
     work_dir: str | Path | None = None,
     research_worker_factory: Callable[[], Any] | None = None,
+    live_executor: Any | None = None,
     log=None,
 ) -> AgentBrainRuntime:
-    """Build the real chat runtime with lazy progressive SEO preparation.
+    """Build the real chat runtime for immediate SEO completion.
 
-    Merely constructing the runtime never opens Edge. The Research worker is
-    created only when the SEO audit finds the first EMPTY/INCOMPLETE SKU.
+    Browser ownership stays lazy. Constructing the runtime opens neither Chrome
+    nor Edge. The same S-TECH live executor is shared by audit and publication;
+    Edge/ChatGPT is created only when the first EMPTY/INCOMPLETE SKU needs
+    research.
     """
     logger = log or print
     paths = AgentPaths.default()
@@ -37,15 +42,19 @@ def build_live_runtime(
             log_callback=logger,
         )
     )
+    shared_live = live_executor or StechLiveExecutor(log=logger)
+    publisher = SeoPublisher(db, shared_live)
     preparer = SeoProgressivePreparer(
         db,
         research_worker_factory=factory,
+        publisher=publisher,
         work_dir=staging_dir,
         log=logger,
     )
     return AgentBrainRuntime(
         db,
         planner,
+        live_executor=shared_live,
         work_dir=staging_dir,
         seo_preparer=preparer,
     )
