@@ -97,6 +97,18 @@ def scope_menu_text() -> str:
     )
 
 
+def scope_kind_from_choice(choice: str) -> str | None:
+    return {
+        "1": "single",
+        "2": "all",
+        "3": "brand",
+        "4": "category",
+        "5": "subcategory",
+        "6": "working_set",
+        "0": None,
+    }.get(str(choice).strip())
+
+
 def main_menu_text() -> str:
     return (
         "\nOPCIONES RÁPIDAS\n"
@@ -225,6 +237,29 @@ def confirmation_text(product: ProductRecord, values: dict[str, Any]) -> str:
     lines.extend([
         "",
         "Escribe ACEPTAR para guardar en S-TECH.",
+        "Escribe CANCELAR para no hacer ningún cambio.",
+    ])
+    return "\n".join(lines)
+
+
+def bulk_confirmation_text(scope: GuidedScope, values: dict[str, Any]) -> str:
+    lines = [
+        "\nCONFIRMAR CAMBIO",
+        f"Alcance: {scope.label}",
+        f"Productos encontrados: {scope.total_matches}",
+        f"Productos aplicables: {len(scope.skus)}",
+        f"Bloqueados por ambigüedad: {len(scope.blocked_skus)}",
+        "Cambios solicitados:",
+    ]
+    for field, value in values.items():
+        lines.append(f"  - {field} = {value}")
+    if scope.blocked_skus:
+        preview = ", ".join(scope.blocked_skus[:10])
+        suffix = " ..." if len(scope.blocked_skus) > 10 else ""
+        lines.append(f"SKU bloqueados: {preview}{suffix}")
+    lines.extend([
+        "",
+        "Escribe ACEPTAR para ejecutar y verificar cada producto en S-TECH.",
         "Escribe CANCELAR para no hacer ningún cambio.",
     ])
     return "\n".join(lines)
