@@ -94,7 +94,7 @@ def test_complete_audit_is_cached_without_starting_research(tmp_path):
 
     result = preparer.accept_audit(
         sku="C", status="SEO_COMPLETE", values=complete,
-        session_id=10, scope={"brand": "JBL"},
+        session_id=None, scope={"brand": "JBL"},
     )
 
     assert result["action"] == "SKIP_COMPLETE"
@@ -110,7 +110,7 @@ def test_first_missing_product_is_researched_immediately_and_left_ready(tmp_path
 
     result = preparer.accept_audit(
         sku="A", status="SEO_EMPTY", values=_empty(),
-        session_id=10, scope={"brand": "JBL"},
+        session_id=None, scope={"brand": "JBL"},
     )
 
     assert research.calls == ["A"]
@@ -126,12 +126,12 @@ def test_next_missing_product_joins_same_batch_without_reprocessing_previous(tmp
     research = FakeResearch()
     preparer = SeoProgressivePreparer(db, research_worker_factory=lambda: research, work_dir=tmp_path)
 
-    preparer.accept_audit(sku="A", status="SEO_EMPTY", values=_empty(), session_id=10, scope={"brand": "JBL"})
+    preparer.accept_audit(sku="A", status="SEO_EMPTY", values=_empty(), session_id=None, scope={"brand": "JBL"})
     first_batch = preparer.batch_id
     preparer.accept_audit(
         sku="B", status="SEO_INCOMPLETE",
         values={"seo_title": "Manual", "seo_description": "", "seo_keywords": "", "seo_faqs": []},
-        session_id=10, scope={"brand": "JBL"},
+        session_id=None, scope={"brand": "JBL"},
     )
 
     assert preparer.batch_id == first_batch
@@ -147,7 +147,8 @@ def test_runtime_bulk_audit_feeds_preparer_after_each_sku(tmp_path):
         def __init__(self): self.calls = []
         def accept_audit(self, **kwargs):
             self.calls.append((kwargs["sku"], kwargs["status"]))
-            return {"action": "RECORDED"}
+            action = "PREPARED" if kwargs["status"] in {"SEO_EMPTY", "SEO_INCOMPLETE"} else "SKIP_COMPLETE"
+            return {"action": action}
         def finish(self): return {"batch_id": None}
 
     recorder = Recorder()
