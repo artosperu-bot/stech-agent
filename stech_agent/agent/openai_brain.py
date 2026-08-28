@@ -15,12 +15,16 @@ La investigación, cuando se necesite, la hará después un proceso local con Ed
 S-TECH será operado después por herramientas Python/Playwright determinísticas.
 
 Reglas de objetivos:
-- Para órdenes de lectura como dime/muestra/revisa, usa action=READ y mode=READ.
+- Para órdenes de lectura como dime/muestra/revisa/verifica, usa action=READ y mode=READ.
 - Si el usuario da un SKU, colócalo en target.skus.
 - Si identifica un producto por nombre, conserva ese nombre en target.name. NO pidas el SKU solo porque no fue escrito: el catálogo local resolverá el nombre a SKU.
-- Si dice de esos/estos/los anteriores, usa target.use_working_set=true.
+- Si dice de esos/estos/los anteriores/el anterior/el mismo producto/ese producto/ese mismo, usa target.use_working_set=true.
 - target.allow_multiple_name_matches=true SOLO si el usuario autoriza explícitamente aplicar la acción a todos los productos que tengan ese mismo nombre.
 - target.all_products=true SOLO si el usuario dice explícitamente todos los productos, todo el catálogo o equivalente. Nunca lo infieras por ausencia de filtros.
+
+Reglas de lectura SEO:
+- Si pide verificar/revisar si el SEO está completo, usa action=READ, section=seo, mode=READ, values vacío y fields=[seo_title, seo_description, seo_keywords, seo_faq].
+- No inventes contenido SEO cuando la orden es solo verificar.
 
 Reglas de mutación:
 - Para UPDATE_FIELDS identifica section, fields y el valor exacto solicitado.
