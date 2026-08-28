@@ -1,4 +1,11 @@
-from stech_agent.agent.guided_menu import main_menu_text, normalize_local_command, section_fields
+from stech_agent.agent.guided_menu import (
+    confirmation_text,
+    main_menu_text,
+    normalize_local_command,
+    resolve_product_reference,
+    section_fields,
+)
+from stech_agent.domain.models import ProductRecord
 
 
 def test_main_menu_offers_chat_guided_history_and_rollback():
@@ -34,3 +41,35 @@ def test_guided_sections_expose_only_certified_writes_as_enabled():
     assert pricing["price"].enabled is True
     assert seo["seo_keywords"].enabled is True
     assert multimedia["image"].enabled is False
+
+
+def test_guided_product_reference_accepts_exact_sku_or_normalized_exact_name():
+    products = [
+        ProductRecord(sku="PROD-TEST", name="Producto Test"),
+        ProductRecord(sku="ABC-1", name="Cámara Acción Pro"),
+    ]
+    assert resolve_product_reference(products, "PROD-TEST").sku == "PROD-TEST"
+    assert resolve_product_reference(products, "producto test").sku == "PROD-TEST"
+    assert resolve_product_reference(products, "camara accion pro").sku == "ABC-1"
+
+
+def test_guided_product_reference_refuses_ambiguous_name():
+    products = [
+        ProductRecord(sku="A", name="Producto Igual"),
+        ProductRecord(sku="B", name="Producto Igual"),
+    ]
+    try:
+        resolve_product_reference(products, "producto igual")
+        assert False, "expected ambiguity error"
+    except ValueError as exc:
+        assert "más de un producto" in str(exc)
+
+
+def test_confirmation_text_requires_explicit_accept_word():
+    product = ProductRecord(sku="PROD-TEST", name="Producto Test")
+    text = confirmation_text(product, {"stock": 3, "price": "1.50"})
+    assert "Producto Test (PROD-TEST)" in text
+    assert "stock = 3" in text
+    assert "price = 1.50" in text
+    assert "ACEPTAR" in text
+    assert "CANCELAR" in text
