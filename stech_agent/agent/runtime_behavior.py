@@ -167,7 +167,7 @@ def _verify_seo_skus(
             )
             if preparation:
                 preparation_batch_id = preparation.get("batch_id") or preparation_batch_id
-                if preparation.get("action") == "PREPARED":
+                if preparation.get("action") in {"PREPARED", "ENQUEUED"}:
                     prepared += 1
         except Exception as exc:
             preparation_errors += 1
@@ -200,7 +200,7 @@ def _verify_seo_skus(
         f"{len(empty_skus)} sin SEO, {errors} error(es)."
     )
     if prepared:
-        message += f" Mientras auditaba dejé {prepared} producto(s) preparados en Research/QA."
+        message += f" Mientras auditaba envié {prepared} producto(s) a Research/QA en segundo plano."
     if preparation_errors:
         message += f" {preparation_errors} preparación(es) quedaron para revisión."
 
