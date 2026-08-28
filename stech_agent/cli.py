@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 from typing import Sequence
 
+from stech_agent.agent.config import PlannerSettings
+from stech_agent.agent.openai_brain import OpenAIPlanner
+from stech_agent.agent.runtime import AgentBrainRuntime
 from stech_agent.catalog.query import query_products
 from stech_agent.catalog.reader import read_items_export
 from stech_agent.config import AgentPaths
@@ -41,6 +44,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     task = sub.add_parser("task-status")
     task.add_argument("task_id", type=int)
+
+    plan = sub.add_parser("plan", help="Interpreta una orden sin ejecutar cambios")
+    plan.add_argument("instruction")
+    plan.add_argument("--session-id", type=int)
     return parser
 
 
@@ -48,6 +55,10 @@ def _bool_arg(value: str | None):
     if value is None:
         return None
     return value == "true"
+
+
+def build_default_planner() -> OpenAIPlanner:
+    return OpenAIPlanner(PlannerSettings.from_env())
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -105,6 +116,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         task = TaskRepository(db).get_task(args.task_id)
         print(json.dumps(task or {"found": False}, ensure_ascii=False))
         return 0 if task else 2
+
+    if args.command == "plan":
+        result = AgentBrainRuntime(db, build_default_planner()).plan(
+            args.instruction,
+            session_id=args.session_id,
+        )
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
 
     return 1
 
