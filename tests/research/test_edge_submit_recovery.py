@@ -1,4 +1,4 @@
-from stech_agent.research.edge_chatgpt import EdgeChatGPTWorker
+from stech_agent.research.runtime_worker import RuntimeEdgeChatGPTWorker
 
 
 class FakeElement:
@@ -26,7 +26,7 @@ class FakeDriver:
         return "button"
 
 
-class Worker(EdgeChatGPTWorker):
+class Worker(RuntimeEdgeChatGPTWorker):
     def __init__(self, raw_dir):
         super().__init__(raw_dir=raw_dir)
         self._fake_last_user_message = ""
