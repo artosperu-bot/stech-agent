@@ -23,7 +23,7 @@ class FakeDriver:
         self.force_submit_calls += 1
         element.text = ""
         self.worker._fake_last_user_message = self.expected
-        return "button"
+        return "requestSubmit"
 
 
 class Worker(RuntimeEdgeChatGPTWorker):
@@ -31,7 +31,7 @@ class Worker(RuntimeEdgeChatGPTWorker):
         super().__init__(raw_dir=raw_dir)
         self._fake_last_user_message = ""
 
-    def _last_user_message_text(self):
+    def _delivery_text(self):
         return self._fake_last_user_message
 
     def _sleep(self, _seconds):
@@ -44,9 +44,8 @@ def test_stuck_prompt_forces_dom_submit_and_verifies_delivery(tmp_path):
     prompt = FakeElement(expected)
     worker.driver = FakeDriver(worker, expected)
 
-    method = worker._ensure_prompt_submitted
-    method(prompt, expected, wait_seconds=0)
+    worker._ensure_prompt_submitted(prompt, expected, wait_seconds=0)
 
     assert worker.driver.force_submit_calls == 1
-    assert worker._last_user_message_text() == expected
+    assert worker._delivery_text() == expected
     assert prompt.text == ""
